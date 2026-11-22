@@ -37,7 +37,6 @@ jobs:
     name: Web app (Cloudflare Workers static assets)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: database
     steps:
       - name: Check required secrets
         id: cfg
