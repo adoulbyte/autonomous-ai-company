@@ -135,3 +135,17 @@ describe('owner tools', () => {
     expect((await sql`select status from public.tasks where idempotency_key = ${'analyze:' + id}`)[0].status).toBe('pending');
   });
 });
+
+describe('delivery → invoice automation', () => {
+  it('prepares exactly one draft invoice when a project is delivered', async () => {
+    const [p] = await sql`insert into public.projects(name, scope, budget_minor, currency) values ('Inv test', 'scope', 50000, 'USD') returning id`;
+    for (const s of ['in_progress', 'in_qa', 'ready_for_delivery', 'delivered']) await sql`update public.projects set status = ${s} where id = ${p.id}`;
+    let inv = await sql`select status, amount_minor, currency from public.invoices where project_id = ${p.id}`;
+    expect(inv).toHaveLength(1);
+    expect(inv[0]).toMatchObject({ status: 'draft', currency: 'USD' });
+    expect(Number(inv[0].amount_minor)).toBe(50000);
+    await sql`update public.projects set status = 'accepted' where id = ${p.id}`;
+    inv = await sql`select id from public.invoices where project_id = ${p.id}`;
+    expect(inv).toHaveLength(1);
+  });
+});

@@ -3,6 +3,7 @@ import { q, supabase, type Row } from '../lib/supabase';
 import { useData } from '../lib/hooks';
 import { ago, money, num, pct } from '../lib/format';
 import { Badge, Card, Empty, ErrorBox, Loading, PageHead, Stat, Table } from '../components/ui';
+import { NextActions } from '../components/NextActions';
 
 async function load() {
   const count = async (table: string, f?: (b: any) => any) => {
@@ -52,6 +53,7 @@ export function CommandCenter() {
     <div className="stack">
       <PageHead title="Command Center" subtitle={`Live view of the business from database records · ${new Date().toLocaleString()}`} />
       <ErrorBox error={error} />
+      <NextActions />
       <div className="grid grid-4">
         <Stat label="Confirmed revenue" value={money(f.confirmed_revenue_minor, data.base)} sub="payments with verified evidence" accent />
         <Stat label="Pending receivables" value={money(f.receivable_minor, data.base)} sub={`${money(f.unconfirmed_payments_minor, data.base)} awaiting confirmation`} />
