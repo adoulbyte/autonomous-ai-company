@@ -107,3 +107,8 @@ describe('database URL parsing', () => {
     try { parseDbUrl('https://supersecretvalue'); } catch (e) { expect((e as Error).message).not.toContain('supersecretvalue'); }
   });
 });
+describe('database URL labels', () => {
+  it('ignores a copied label before the URI', () => {
+    expect(parseDbUrl('session pooler: postgresql://postgres.ref:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres').host).toBe('aws-1-eu-west-3.pooler.supabase.com');
+  });
+});

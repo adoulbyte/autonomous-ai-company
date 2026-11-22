@@ -11,11 +11,13 @@ export interface ParsedDbUrl { host: string; port: number; database: string; use
  * placeholders like [YOUR-PASSWORD]. Never includes the password in error messages.
  */
 export function parseDbUrl(raw: string): ParsedDbUrl {
-  const url = raw.trim().replace(/^['"]|['"]$/g, '').trim();
+  let url = raw.trim().replace(/^['"]|['"]$/g, '').trim();
+  const start = url.search(/postgres(?:ql)?:\/\//);     // tolerate a copied label such as "Session pooler: "
+  if (start > 0) url = url.slice(start).trim();
   const m = url.match(/^postgres(?:ql)?:\/\/([^:/?#@]+)(?::(.*))?@([^@/?#]+?)(?::(\d+))?\/([^?#/]+)(?:\?(.*))?$/s);
   if (!m) {
     const shape = url.replace(/:\/\/[^@]*@/, '://<user>:<password>@').replace(/[A-Za-z0-9]/g, (c, i) => (i < 14 ? c : 'x'));
-    throw new Error(`DATABASE_URL is not a valid postgres connection string (expected postgresql://USER:PASSWORD@HOST:PORT/DATABASE). Shape received: ${shape.slice(0, 80)}`);
+    throw new Error(`DATABASE_URL is not a valid postgres connection string (expected postgresql://USER:PASSWORD@HOST:PORT/DATABASE). Shape received: ${shape.slice(0, 40)}… (${url.length} chars)`);
   }
   const [, username, password, host, port, database, query] = m;
   if (password && (/^\[.*\]$/.test(password) || /YOUR-PASSWORD/i.test(password))) throw new Error('DATABASE_URL still contains the [YOUR-PASSWORD] placeholder: replace it (without brackets) with the database password.');
