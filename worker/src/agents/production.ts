@@ -5,6 +5,10 @@ import { PermanentError } from '../errors.js';
 import { sha256, untrusted } from '../sanitize.js';
 import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
 import { getSetting, logEvent } from '../db.js';
+import { skillsFor } from '../skills.js';
+import { renderInvoicePdf, type PaymentInstructions } from '../email/invoice.js';
+import { previewBlock, renderHtml } from '../email/template.js';
+import { identity } from './comms.js';
 import type { Tx } from '../db.js';
 
 // ---------------------------------------------------------------------------
@@ -88,7 +92,9 @@ export const produceDeliverable: Handler = async (ctx) => {
   const prev = version > 1 ? await ctx.sql`select content from public.deliverables where project_id = ${project_id} and work_item = ${work_item} and version = ${version - 1}` : [];
 
   const res = await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
-    messages: [{ role: 'user', content: `Produce the complete deliverable for this work item. Return JSON {title, content, notes, limitations}.
+    messages: [{ role: 'user', content: `${skillsFor('production', `${item.format} ${item.title} ${item.instructions}`)}
+
+Produce the complete deliverable for this work item, to a standard a demanding paying client accepts without changes. Return JSON {title, content, notes, limitations}.
 content must be the full, final deliverable in ${item.format} format — no placeholders, no "TODO", no lorem ipsum, no "insert X here".
 Be honest in limitations about anything you could not verify or do.
 
@@ -155,7 +161,9 @@ export const reviewDeliverable: Handler = async (ctx) => {
 
   const res = await ctx.ai.generate({ roleKey: 'qa_reviewer', taskId: ctx.task.id, tier: 'strong', schema: QaSchema, maxTokens: 1800,
     avoidModel: avoid, temperature: 0,
-    messages: [{ role: 'user', content: `You are independent QA reviewer #${reviewNo} of ${policy.reviewers_required}. You did NOT produce this deliverable and you have not seen other reviews. The client pays only for flawless work: check it strictly against EACH acceptance criterion, and also flag factual errors, fake links/images, unfinished parts, unclear writing or anything a demanding client would reject.
+    messages: [{ role: 'user', content: `${skillsFor('qa', `${d.format} ${d.title}`)}
+
+You are independent QA reviewer #${reviewNo} of ${policy.reviewers_required}. You did NOT produce this deliverable and you have not seen other reviews. The client pays only for flawless work: check it strictly against EACH acceptance criterion, and also flag factual errors, fake links/images, unfinished parts, unclear writing or anything a demanding client would reject.
 A criterion is met only if the deliverable itself demonstrates it — quote or point to the exact part as evidence. Do not give the benefit of the doubt.
 Return JSON {criteria_results:[{criterion, met, evidence}], issues:[...], summary}. Include every criterion below exactly once.
 
@@ -253,11 +261,23 @@ export const prepareDelivery: Handler = async (ctx) => {
       return { deliverables: dels.length, invoice: null };
     }
     const manifest = dels.map((d) => `- ${d.title}`).join('\n');
+    const id = await identity(ctx.sql);
+    const pay = await getSetting<PaymentInstructions>(ctx.sql, 'finance.payment_instructions', { enabled: false, text: '', beneficiary: '', iban: '', bic: '', bank: '', reference_hint: '' });
+    const full = await tx`select title, content, format from public.deliverables where project_id = ${projectId} and status = 'ready_for_delivery' order by work_item`;
+    const previews = full.map((d) => { const c = String(d.content); const cut = Math.max(400, Math.min(1500, Math.floor(c.length * 0.25)));
+      return previewBlock(String(d.title), c.slice(0, cut) + (c.length > cut ? '\n…' : ''), `Preview of ${Math.round((cut / c.length) * 100)}% — full version released on payment. Passed two independent quality reviews.`); }).join('');
+    const [client] = await tx`select co.name from public.clients cl join public.companies co on co.id = cl.company_id where cl.id = ${p.client_id}`;
+    const pdf = await renderInvoicePdf({ number: inv.number, issue_date: String(inv.issue_date instanceof Date ? inv.issue_date.toISOString().slice(0, 10) : inv.issue_date),
+      due_date: String(inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : inv.due_date), amount_minor: Number(inv.amount_minor), currency: String(inv.currency),
+      client_name: client?.name ?? 'Client', client_email: p.contact_email ?? null, project_name: String(p.name),
+      lines: [{ description: String(p.name), amount_minor: Number(inv.amount_minor) }] }, id, pay);
     const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
         values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Your project is ready: ' + p.name}) returning id`;
     const body = `Hello,\n\nGood news: the work for "${p.name}" is complete and has passed our independent quality review (${dels.length} deliverable${dels.length > 1 ? 's' : ''}):\n\n${manifest}\n\nInvoice ${inv.number}: ${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}, due ${inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : inv.due_date}.\nThe deliverables are released automatically as soon as payment is received.\n\nThis message was prepared by an AI-assisted business system.`;
-    const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Invoice ' + inv.number + ' — ' + p.name}, ${body}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
+    const html = renderHtml(body, id, { preheader: `Your project is ready — preview inside`, blocks: previews });
+    const attachments = [{ filename: `${inv.number}.pdf`, content_b64: pdf.toString('base64'), contentType: 'application/pdf' }];
+    const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Invoice ' + inv.number + ' — ' + p.name}, ${body}, ${html}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'payment.request.send', title: `Send invoice ${inv.number}: ${String(p.name).slice(0, 80)}`, requestedBy: 'project_manager',
       reason: 'All deliverables passed independent QA. Requesting payment before releasing them.', evidence: dels.map((d) => ({ deliverable: d.title, version: d.version })),
@@ -267,7 +287,9 @@ export const prepareDelivery: Handler = async (ctx) => {
       key: `payreq:${projectId}:${inv.id}`, payload: { message_id: msg.id, invoice_id: inv.id }, costMinor: 0, currency: String(inv.currency),
     });
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
-    const auto = await autoApproveIfPolicy(tx, approvalId);
+    // The invoice must carry real payment coordinates before it can go out automatically.
+    const auto = pay.enabled ? await autoApproveIfPolicy(tx, approvalId) : false;
+    if (!pay.enabled) await logEvent(tx, 'invoice', String(inv.id), 'payment_details_missing', `Invoice ${inv.number} is ready but payment details are not configured (Settings → finance.payment_instructions). It will be sent once they are.`, {}, 'warning');
     return { deliverables: dels.length, invoice: inv.number, message_id: msg.id, auto_approved: auto };
   });
 };
@@ -291,8 +313,12 @@ export const deliverProject: Handler = async (ctx) => {
       `\n\nIf anything needs adjustment within the agreed scope, just reply to this message.\n\nThis message was prepared by an AI-assisted business system.`;
     const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
         values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Delivery: ' + p.name}) returning id`;
-    const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${body}, ${ctx.task.id}, ${'delivery:' + projectId}) returning id`;
+    const ext: Record<string, string> = { markdown: 'md', code: 'txt', json: 'json', text: 'txt', html: 'html', csv: 'csv' };
+    const files = dels.map((d, i) => ({ filename: `${String(i + 1).padStart(2, '0')}-${String(d.title).replace(/[^\w.-]+/g, '_').slice(0, 60)}.${ext[d.format as string] ?? 'txt'}`,
+      content_b64: Buffer.from(String(d.content), 'utf8').toString('base64'), contentType: 'text/plain' }));
+    const shortBody = `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
+    const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, attachments, generated_by_task, idempotency_key)
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'delivery.send', title: `Deliver (paid): ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
       reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),

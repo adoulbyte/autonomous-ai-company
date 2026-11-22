@@ -2,6 +2,7 @@ import type { Sql, Tx } from '../db.js';
 import type { AiGateway } from '../ai/gateway.js';
 import type { TaskRow } from '../queue.js';
 import { complete } from '../queue.js';
+import type { MailTransport } from '../email/transport.js';
 
 export class LeaseLostError extends Error { constructor() { super('lease lost before completion; result discarded'); } }
 
@@ -12,6 +13,7 @@ export interface HandlerContext {
   workerId: string;
   env: NodeJS.ProcessEnv;
   fetchFn?: typeof fetch;
+  mail?: MailTransport | null;
   heartbeat: (progress?: number, note?: string) => Promise<void>;
 }
 

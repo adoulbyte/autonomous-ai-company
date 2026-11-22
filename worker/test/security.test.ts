@@ -149,7 +149,7 @@ describe('delivery → invoice automation', () => {
   });
   it('auto-approval only happens for action types the policy marks "auto"', async () => {
     const [{ id: a1 }] = await sql`select public.request_approval('opportunity.pursue', 'x', 'scoring_engine', 'r', 'a', 'b') as id`;
-    const [{ id: a2 }] = await sql`select public.request_approval('delivery.send', 'y', 'project_manager', 'r', 'a', 'b') as id`;
+    const [{ id: a2 }] = await sql`select public.request_approval('settings.change', 'y', 'executive_strategist', 'r', 'a', 'b') as id`;
     expect((await sql`select public.system_auto_approve(${a1}) as ok`)[0].ok).toBe(true);
     expect((await sql`select public.system_auto_approve(${a2}) as ok`)[0].ok).toBe(false);
     await expect(asOwner(sql, (tx) => tx`select public.system_auto_approve(${a2})`)).rejects.toThrow(/permission denied/);

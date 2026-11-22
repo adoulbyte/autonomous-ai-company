@@ -8,6 +8,9 @@ import { analyzeOpportunity, runSource, scoreOpportunityTask } from './agents/op
 import { draftOutreach, triageMessage } from './agents/sales.js';
 import { deliverProject, planProject, prepareDelivery, produceDeliverable, reviewDeliverable } from './agents/production.js';
 import { quoteLead } from './agents/pricing.js';
+import { followUp, pollInbox, sendOutbox } from './agents/comms.js';
+import { respondToLead } from './agents/negotiation.js';
+import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
 
@@ -23,6 +26,10 @@ export const HANDLERS: Record<string, Handler> = {
   'project.prepare_delivery': prepareDelivery,
   'project.deliver': deliverProject,
   'pricing.quote': quoteLead,
+  'comms.send': sendOutbox,
+  'comms.poll_inbox': pollInbox,
+  'lead.followup': followUp,
+  'lead.respond': respondToLead,
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'system.health_check': healthCheck,
@@ -30,13 +37,15 @@ export const HANDLERS: Record<string, Handler> = {
 
 export interface RuntimeOptions {
   sql: Sql; workerId: string; env?: NodeJS.ProcessEnv; fetchFn?: FetchLike; timeBudgetMs?: number; runUrl?: string;
+  /** company mailbox (null = not configured). Defaults to Gmail from env. */
+  mail?: MailTransport | null;
   /** stop after this many tasks (tests) */
   maxTasks?: number;
   log?: (msg: string) => void;
 }
 
 /** Deterministic scheduler: enqueue due work idempotently (safe to run concurrently / repeatedly). */
-export async function scheduleDueWork(sql: Sql, now = new Date()): Promise<Record<string, number>> {
+export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String(now.getTime())): Promise<Record<string, number>> {
   const recovered = Number((await sql`select public.recover_expired_leases() as n`)[0].n);
   const expired = Number((await sql`select public.expire_approvals() as n`)[0].n);
   const executed = Number((await sql`select public.execute_approved_actions() as n`)[0].n);
@@ -58,8 +67,11 @@ export async function scheduleDueWork(sql: Sql, now = new Date()): Promise<Recor
   // CRM reminders and follow-ups surface as alerts (once).
   const reminders = await sql`update public.reminders set notified_at = now() where done_at is null and notified_at is null and due_at <= now() returning id, title, entity_type, entity_id`;
   for (const r of reminders) await logEvent(sql, String(r.entity_type), String(r.entity_id), 'reminder_due', `Reminder due: ${r.title}`, {}, 'warning');
-  const followUps = await sql`update public.leads set next_follow_up_at = null where stage = 'contacted' and next_follow_up_at <= now() returning id, title`;
-  for (const l of followUps) await logEvent(sql, 'lead', String(l.id), 'follow_up_due', `Follow-up due for "${l.title}" (no reply logged)`, {}, 'warning');
+  const followUps = await sql`select id, title, follow_ups_sent from public.leads where stage = 'contacted' and next_follow_up_at <= now()`;
+  for (const l of followUps) await enqueue(sql, { type: 'lead.followup', key: `followup:${l.id}:${Number(l.follow_ups_sent) + 1}`, role: 'sales_agent', entityType: 'lead',
+    entityId: String(l.id), input: { lead_id: l.id }, priority: 55, title: `Follow-up: ${String(l.title).slice(0, 70)}` });
+  await enqueue(sql, { type: 'comms.poll_inbox', key: `comms.poll:${runId}`, role: 'mail_clerk', priority: 95, title: 'Check company mailbox', timeoutSeconds: 120 });
+  await enqueue(sql, { type: 'comms.send', key: `comms.send:${runId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails', timeoutSeconds: 180 });
   return { recovered, expired, executed, sources, reminders: reminders.length, follow_ups: followUps.length };
 }
 
@@ -73,6 +85,7 @@ export async function executeTask(o: RuntimeOptions, ai: AiGateway, task: TaskRo
   try {
     await Promise.race([
       handler({ sql: o.sql, ai, task, workerId: o.workerId, env: o.env ?? process.env, fetchFn: o.fetchFn as typeof fetch | undefined,
+        mail: o.mail === undefined ? gmailTransport(o.env ?? process.env) : o.mail,
         heartbeat: async (p, n) => { await heartbeat(o.sql, task.id, o.workerId, p, n); } }),
       new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`task timed out after ${task.timeout_seconds}s`)), timeoutMs); }),
     ]);
@@ -98,7 +111,7 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
   const budget = o.timeBudgetMs ?? (await getSetting<number>(o.sql, 'worker.time_budget_seconds', 420)) * 1000;
   await o.sql`insert into public.worker_heartbeats(worker_id, run_url) values (${o.workerId}, ${o.runUrl ?? null})
       on conflict (worker_id) do update set last_seen_at = now(), status = 'running'`;
-  const schedule = await scheduleDueWork(o.sql);
+  const schedule = await scheduleDueWork(o.sql, new Date(), o.workerId);
   log(`schedule: ${JSON.stringify(schedule)}`);
   const ai = new AiGateway(o.sql, o.env ?? process.env, o.fetchFn ?? fetch);
   let succeeded = 0, failed = 0, n = 0;
@@ -111,6 +124,12 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
       const r = await executeTask(o, ai, task);
       if (r === 'succeeded') succeeded++; else failed++;
       await o.sql`update public.worker_heartbeats set last_seen_at = now(), tasks_succeeded = ${succeeded}, tasks_failed = ${failed} where worker_id = ${o.workerId}`;
+    }
+    // Final pass: send any email approved during this run (outreach, replies, invoices, deliveries) without waiting 2 hours.
+    if (Date.now() - started < budget - 10_000 && (o.maxTasks == null || n < o.maxTasks)) {
+      await enqueue(o.sql, { type: 'comms.send', key: `comms.send:end:${o.workerId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails (end of run)', timeoutSeconds: 180 });
+      const [t] = await claim(o.sql, o.workerId, 1, ['comms.send']);
+      if (t) { const r = await executeTask(o, ai, t); if (r === 'succeeded') succeeded++; else failed++; }
     }
   } finally {
     await o.sql`update public.worker_heartbeats set last_seen_at = now(), status = 'finished', tasks_succeeded = ${succeeded}, tasks_failed = ${failed},

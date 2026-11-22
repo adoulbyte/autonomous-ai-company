@@ -3,8 +3,9 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
 import { detectInjection, untrusted } from '../sanitize.js';
-import { getSetting } from '../db.js';
-import { autoApproveIfPolicy, requestApproval } from '../queue.js';
+import { getSetting, logEvent } from '../db.js';
+import { skillsFor } from '../skills.js';
+import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
 
 const OutreachSchema = z.object({
   subject: z.string().min(3).max(160),
@@ -41,12 +42,13 @@ export const draftOutreach: Handler = async (ctx) => {
       where oe.opportunity_id = ${lead.opportunity_id} order by e.fetched_at desc limit 1`;
   const profile = await getSetting<{ name: string; positioning: string; skills: string[]; disclosure: string }>(ctx.sql, 'business.profile', {} as never);
 
-  const prompt = `Write a first reply to a public request for paid work. Return JSON: {subject, body, claims_made: string[], questions_for_buyer: string[]}.
+  const prompt = `${skillsFor('sales')}
+
+Write a first reply to a public request for paid work. Return JSON: {subject, body, claims_made: string[], questions_for_buyer: string[]}.
 Rules (mandatory):
 - Reference the buyer's actual request specifically; propose a concrete first step and ask 1-3 clarifying questions.
 - Honest only: do NOT claim years of experience, past clients, testimonials, awards, certifications or a portfolio. Do NOT pretend to be a human individual.
 - No pressure tactics or urgency. 120-220 words. Plain text, no markdown.
-- End the body with exactly this disclosure line: "${profile.disclosure}"
 - claims_made lists every factual claim you make about our company.
 
 Our company (trusted): ${JSON.stringify({ name: profile.name, positioning: profile.positioning, skills: profile.skills })}
@@ -58,9 +60,8 @@ ${untrusted(`buyer-request ${evidence[0]?.url ?? lead.opp_url}`, String(evidence
 
   const res = await ctx.ai.generate({ roleKey: 'sales_agent', taskId: ctx.task.id, tier: 'standard', schema: OutreachSchema,
     messages: [{ role: 'user', content: prompt }], maxTokens: 900, temperature: 0.4 });
-  let body = res.data.body.trim();
-  if (!body.includes(profile.disclosure.slice(0, 30))) body = `${body}\n\n${profile.disclosure}`;
-  const violations = outreachViolations(body, profile.disclosure);
+  const body = res.data.body.trim();   // signature + AI disclosure are appended by the email template
+  const violations = outreachViolations(`${body}\n${profile.disclosure}`, profile.disclosure);
   if (violations.length) throw new Error(`draft rejected by compliance gate: ${violations.join('; ')}`); // retryable: new draft
   const to = lead.contact_email ?? lead.contact_handle ?? lead.opp_url;
 
@@ -112,19 +113,19 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
   return finish(ctx, async (tx) => {
     await tx`update public.messages set classification = ${tx.json({ ...d, model: res.model } as never)}, priority = ${injection ? 'high' : d.priority},
         injection_suspected = ${injection} where id = ${id}`;
-    if (m.lead_id) {
-      const [lead] = await tx`select stage from public.leads where id = ${m.lead_id}`;
-      if (d.intent === 'unsubscribe' || d.intent === 'negative') {
-        await tx`update public.contacts set do_not_contact = ${d.intent === 'unsubscribe'} where id = (select contact_id from public.leads where id = ${m.lead_id})`;
-        if (['contacted', 'engaged', 'proposal', 'negotiating', 'qualified'].includes(lead?.stage)) await tx`update public.leads set stage = 'lost', lost_reason = ${'buyer: ' + d.intent} where id = ${m.lead_id}`;
-      } else if (lead?.stage === 'contacted' && ['positive', 'question', 'neutral'].includes(d.intent)) {
-        await tx`update public.leads set stage = 'engaged' where id = ${m.lead_id}`;
+    if (injection) {
+      await logEvent(tx, 'message', id, 'injection_suspected', `Inbound message from ${m.from_addr ?? 'unknown'} looks like a prompt-injection attempt — no automatic reply`, {}, 'warning');
+    } else if (m.lead_id && d.category !== 'spam') {
+      if (d.intent === 'unsubscribe') {
+        await tx`update public.contacts set do_not_contact = true where id = (select contact_id from public.leads where id = ${m.lead_id})`;
+        const [lead] = await tx`select stage from public.leads where id = ${m.lead_id}`;
+        if (['contacted', 'engaged', 'proposal', 'negotiating', 'qualified'].includes(lead?.stage)) await tx`update public.leads set stage = 'lost', lost_reason = 'unsubscribed' where id = ${m.lead_id}`;
+      } else {
+        await enqueue(tx, { type: 'lead.respond', key: `respond:${id}`, role: 'negotiation_agent', entityType: 'lead', entityId: String(m.lead_id),
+          input: { lead_id: m.lead_id, message_id: id }, priority: 82, title: `Respond to client: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 220 });
       }
-    }
-    if (d.reply_draft && !injection && d.category !== 'spam') {
-      await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key)
-          values (${m.conversation_id}, 'outbound', 'draft', ${m.from_addr}, ${'Re: ' + (m.subject ?? '')}, ${d.reply_draft}, ${ctx.task.id}, ${'reply:' + id})
-          on conflict (idempotency_key) do nothing`;
+    } else if (d.category !== 'spam') {
+      await logEvent(tx, 'message', id, 'inbound_needs_review', `New inbound email (${d.category}) from ${m.from_addr ?? 'unknown'}: ${d.summary.slice(0, 160)}`, {}, d.priority === 'urgent' || d.priority === 'high' ? 'warning' : 'info');
     }
     return { category: d.category, intent: d.intent, priority: d.priority, injection_suspected: injection };
   });

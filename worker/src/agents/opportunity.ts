@@ -190,6 +190,12 @@ export const scoreOpportunityTask: Handler = async (ctx) => {
     evidence_quality: num(opp.evidence_quality), competition: num(opp.competition), risk: num(opp.risk),
     posted_at: opp.posted_at as Date | null, risk_flags: opp.risk_flags as string[],
   }, weights, rules);
+  const comms = await getSetting<{ require_email_contact_for_outreach: boolean }>(ctx.sql, 'comms.policy', { require_email_contact_for_outreach: false });
+  const hasEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(opp.buyer_contact ?? ''));
+  if (r.status === 'shortlisted' && comms.require_email_contact_for_outreach && !hasEmail) {
+    r.status = 'monitoring'; r.decision = 'monitor';
+    r.reasons.push('No direct email contact published: kept in monitoring (autonomous outreach only uses published email addresses)');
+  }
 
   return finish(ctx, async (tx) => {
     if (opp.status !== 'scored') {

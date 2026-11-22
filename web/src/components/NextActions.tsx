@@ -8,6 +8,7 @@ interface Action { key: string; icon: string; title: string; detail: string; to:
 /** Plain-language list of what the owner must do now, computed from real records. */
 export function NextActions() {
   const { data } = useData(async () => {
+    const [paySetting] = await q<Row[]>(supabase.from('settings').select('value').eq('key', 'finance.payment_instructions'));
     const [approvals, readyProjects, deliveredNoInvoice, draftInvoices, openInvoices, approvedMsgs, pendingPayments] = await Promise.all([
       q<Row[]>(supabase.from('approvals').select('id,title').eq('status', 'pending')),
       q<Row[]>(supabase.from('projects').select('id,name').eq('status', 'ready_for_delivery')),
@@ -18,7 +19,10 @@ export function NextActions() {
       q<Row[]>(supabase.from('payments').select('id').eq('status', 'pending')),
     ]);
     const noInvoice = deliveredNoInvoice.filter((p) => !(p.invoices as Row[]).some((i) => i.status !== 'void'));
+    const payMissing = !(paySetting?.value as Row | undefined)?.enabled;
     const actions: Action[] = [
+      { key: 'paydetails', icon: '🏦', title: 'Coordonnées de paiement à renseigner', count: payMissing && (readyProjects.length + openInvoices.length) > 0 ? 1 : 0, to: '/settings', cta: 'Ouvrir Settings',
+        detail: 'Des factures sont prêtes mais ne peuvent pas partir sans tes coordonnées de paiement. Settings → finance.payment_instructions : renseigne l\'IBAN puis mets "enabled": true.' },
       { key: 'approvals', icon: '✅', title: 'Décisions à prendre', count: approvals.length, to: '/approvals', cta: 'Voir les approbations',
         detail: approvals.length ? `Ex. : « ${approvals[0].title} ». Les agents attendent ton accord avant d'agir.` : '' },
       { key: 'messages', icon: '✉️', title: 'Messages approuvés à envoyer', count: approvedMsgs.length, to: '/communications', cta: 'Ouvrir Communications',
