@@ -28,9 +28,14 @@ export function parseDbUrl(raw: string): ParsedDbUrl {
 
 /** Supabase's pooler (Supavisor) needs the user as "postgres.<project-ref>"; derive the ref from SUPABASE_URL if missing. */
 export function applySupabasePoolerUser(p: ParsedDbUrl, env: NodeJS.ProcessEnv = process.env): ParsedDbUrl {
-  if (!/pooler\.supabase\.com$/.test(p.host) || p.username.includes('.')) return p;
+  if (!/pooler\.supabase\.com$/.test(p.host)) return p;
   const ref = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? '').match(/^https:\/\/([a-z0-9]+)\.supabase\.co/)?.[1] ?? env.SUPABASE_PROJECT_REF;
-  return ref ? { ...p, username: `${p.username}.${ref}` } : p;
+  if (!ref) return p;
+  // The pooler's default database user is always "postgres.<project-ref>". Copied strings sometimes carry a
+  // masked/placeholder user (e.g. "hidden"); when the user is not postgres.<ref> for THIS project, use the canonical one.
+  const role = p.username.split('.')[0];
+  const canonicalRole = /^[a-z_][a-z0-9_]*$/.test(role) && role !== 'hidden' ? role : 'postgres';
+  return { ...p, username: `${canonicalRole}.${ref}` };
 }
 
 export function describeDbTarget(url: string): string {

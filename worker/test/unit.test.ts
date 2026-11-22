@@ -119,5 +119,6 @@ describe('supabase pooler user', () => {
     const p = parseDbUrl('postgresql://postgres:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres');
     expect(applySupabasePoolerUser(p, { SUPABASE_URL: 'https://abcdefgh.supabase.co' } as NodeJS.ProcessEnv).username).toBe('postgres.abcdefgh');
     expect(applySupabasePoolerUser(parseDbUrl('postgresql://postgres.x:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres'), {} as NodeJS.ProcessEnv).username).toBe('postgres.x');
+    expect(applySupabasePoolerUser(parseDbUrl('postgresql://hidden.zzz:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres'), { SUPABASE_URL: 'https://abcdefgh.supabase.co' } as NodeJS.ProcessEnv).username).toBe('postgres.abcdefgh');
   });
 });
