@@ -14,13 +14,16 @@ export const hnFreelancer: Connector = async ({ config, maxItems, fetchFn }) => 
   const search = await getJson<AlgoliaSearch>(
     'https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=%22Seeking%20freelancer%22&hitsPerPage=3', { fetchFn });
   const maxAge = Number(config.max_thread_age_days ?? 45);
-  const thread = search.hits
+  const threads = search.hits
     .filter((h) => /seeking freelancer/i.test(h.title))
-    .find((h) => (Date.now() - new Date(h.created_at).getTime()) / 86_400_000 <= maxAge);
-  if (!thread) return [];
-  const item = await getJson<AlgoliaItem>(`https://hn.algolia.com/api/v1/items/${thread.objectID}`, { fetchFn });
+    .filter((h) => (Date.now() - new Date(h.created_at).getTime()) / 86_400_000 <= maxAge)
+    .slice(0, 2);   // current month + previous month (a new thread may have few posts yet)
   const out: RawOpportunity[] = [];
-  for (const c of item.children ?? []) {
+  for (const thread of threads) {
+  if (out.length >= maxItems) break;
+  const item = await getJson<AlgoliaItem>(`https://hn.algolia.com/api/v1/items/${thread.objectID}`, { fetchFn });
+  const children = [...(item.children ?? [])].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  for (const c of children) {
     if (!c.text || !c.author) continue;
     const text = htmlToText(c.text);
     if (!/^\s*seeking\s+freelancer/i.test(text)) continue;   // only buyers, not freelancers advertising
@@ -38,6 +41,7 @@ export const hnFreelancer: Connector = async ({ config, maxItems, fetchFn }) => 
       raw: { thread_id: thread.objectID, thread_title: thread.title, author: c.author },
     });
     if (out.length >= maxItems) break;
+  }
   }
   return out;
 };

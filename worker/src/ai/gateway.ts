@@ -9,7 +9,7 @@ const TIER_ORDER: Tier[] = ['fast', 'standard', 'strong'];
 
 export interface ModelRow {
   provider_key: string; model: string; tier: Tier; base_url: string; api_key_env: string;
-  priority: number; max_output_tokens: number | null; extra_headers?: Record<string, string>;
+  priority: number; max_output_tokens: number | null; extra_headers?: Record<string, string>; request_options?: Record<string, unknown>;
 }
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -47,12 +47,14 @@ export class AiGateway {
 
   async candidates(tier: Tier, allowDowngrade = false): Promise<ModelRow[]> {
     const rows = await this.sql<ModelRow[]>`
-      select m.provider_key, m.model, m.tier, p.base_url, p.api_key_env, p.priority, m.max_output_tokens, p.extra_headers
+      select m.provider_key, m.model, m.tier, p.base_url, p.api_key_env, p.priority, m.max_output_tokens, p.extra_headers, p.request_options
       from public.ai_models m join public.ai_providers p on p.key = m.provider_key
       where m.enabled and p.enabled and (m.cooldown_until is null or m.cooldown_until < now())`;
     const want = TIER_ORDER.indexOf(tier);
     return rows
       .filter((r) => !!this.env[r.api_key_env])
+      .map((r) => ({ ...r, base_url: r.base_url.replace(/\$\{([A-Z0-9_]+)\}/g, (_, k) => this.env[k] ?? '') }))
+      .filter((r) => !/\/\/[^/]*\/\/|accounts\/\/|\$\{/.test(r.base_url))   // unresolved placeholders => unusable
       .filter((r) => allowDowngrade || TIER_ORDER.indexOf(r.tier) >= want)
       .sort((a, b) => {
         // exact tier first, then nearest higher tier, then provider priority
@@ -116,7 +118,7 @@ export class AiGateway {
               messages: attemptMessages,
               temperature: opts.temperature ?? 0.2,
               max_tokens: Math.min(opts.maxTokens ?? 1500, m.max_output_tokens ?? 4000),
-              response_format: { type: 'json_object' },
+              ...(m.request_options ?? { response_format: { type: 'json_object' } }),
             }),
             signal: AbortSignal.timeout(90_000),
           });

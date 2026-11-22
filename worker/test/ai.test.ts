@@ -111,3 +111,19 @@ describe('AI gateway robustness', () => {
     expect(s[1].status).toBe('error'); expect(s[1].error).toMatch(/unexpected provider response/);
   });
 });
+
+describe('provider configuration', () => {
+  it('fills base_url placeholders from env and skips providers whose placeholders are missing', async () => {
+    await sql`update public.ai_models set cooldown_until = null, enabled = true`;
+    const withCf = await new AiGateway(sql, { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'acc123' } as NodeJS.ProcessEnv).candidates('standard');
+    expect(withCf.find((m) => m.provider_key === 'cloudflare_ai')?.base_url).toBe('https://api.cloudflare.com/client/v4/accounts/acc123/ai/v1');
+    const noAcct = await new AiGateway(sql, { CLOUDFLARE_API_TOKEN: 't' } as NodeJS.ProcessEnv).candidates('standard');
+    expect(noAcct.find((m) => m.provider_key === 'cloudflare_ai')).toBeUndefined();
+  });
+  it('omits response_format for providers that do not declare it', async () => {
+    let body: any;
+    const f = (async (_u: string, init: RequestInit) => { body = JSON.parse(String(init.body)); return Response.json({ choices: [{ message: { content: '{"answer":"x"}' } }] }); }) as unknown as typeof fetch;
+    await new AiGateway(sql, { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'a' } as NodeJS.ProcessEnv, f).generate({ roleKey: 'research_analyst', tier: 'standard', schema, messages: msg });
+    expect(body.model).toMatch(/^@cf\//); expect(body.response_format).toBeUndefined();
+  });
+});
