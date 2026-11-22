@@ -122,3 +122,9 @@ describe('supabase pooler user', () => {
     expect(applySupabasePoolerUser(parseDbUrl('postgresql://hidden.zzz:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres'), { SUPABASE_URL: 'https://abcdefgh.supabase.co' } as NodeJS.ProcessEnv).username).toBe('postgres.abcdefgh');
   });
 });
+describe('separate DB password secret', () => {
+  it('overrides the password from the URL', () => {
+    const p = applySupabasePoolerUser(parseDbUrl('postgresql://hidden:masked@aws-0-eu-central-1.pooler.supabase.com:5432/postgres'), { SUPABASE_URL: 'https://abcdefgh.supabase.co', SUPABASE_DB_PASSWORD: 'Real123' } as NodeJS.ProcessEnv);
+    expect(p).toMatchObject({ username: 'postgres.abcdefgh', password: 'Real123' });
+  });
+});

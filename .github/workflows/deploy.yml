@@ -27,11 +27,11 @@ jobs:
       - name: Apply database migrations
         working-directory: worker
         run: npm ci && npm run migrate
-        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}' }
+        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}', SUPABASE_DB_PASSWORD: '${{ secrets.SUPABASE_DB_PASSWORD }}' }
       - name: Register owner (idempotent)
         working-directory: worker
         run: npm run bootstrap-owner
-        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', OWNER_EMAIL: '${{ secrets.OWNER_EMAIL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}' }
+        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', OWNER_EMAIL: '${{ secrets.OWNER_EMAIL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}', SUPABASE_DB_PASSWORD: '${{ secrets.SUPABASE_DB_PASSWORD }}' }
 
   web:
     name: Web app (Cloudflare Workers static assets)

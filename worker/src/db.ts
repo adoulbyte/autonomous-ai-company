@@ -28,8 +28,9 @@ export function parseDbUrl(raw: string): ParsedDbUrl {
 
 /** Supabase's pooler (Supavisor) needs the user as "postgres.<project-ref>"; derive the ref from SUPABASE_URL if missing. */
 export function applySupabasePoolerUser(p: ParsedDbUrl, env: NodeJS.ProcessEnv = process.env): ParsedDbUrl {
-  if (!/pooler\.supabase\.com$/.test(p.host)) return p;
+  if (!/pooler\.supabase\.com$/.test(p.host)) return env.SUPABASE_DB_PASSWORD ? { ...p, password: env.SUPABASE_DB_PASSWORD } : p;
   const ref = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? '').match(/^https:\/\/([a-z0-9]+)\.supabase\.co/)?.[1] ?? env.SUPABASE_PROJECT_REF;
+  if (env.SUPABASE_DB_PASSWORD) p = { ...p, password: env.SUPABASE_DB_PASSWORD };   // separate secret overrides the URL's password
   if (!ref) return p;
   // The pooler's default database user is always "postgres.<project-ref>". Copied strings sometimes carry a
   // masked/placeholder user (e.g. "hidden"); when the user is not postgres.<ref> for THIS project, use the canonical one.

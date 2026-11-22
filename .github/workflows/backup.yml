@@ -32,7 +32,7 @@ jobs:
         working-directory: worker
       - name: Dump, compress, encrypt
         if: steps.cfg.outputs.ok == 'true'
-        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}', PASSPHRASE: '${{ secrets.BACKUP_PASSPHRASE }}' }
+        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}', SUPABASE_DB_PASSWORD: '${{ secrets.SUPABASE_DB_PASSWORD }}', PASSPHRASE: '${{ secrets.BACKUP_PASSPHRASE }}' }
         run: |
           set -euo pipefail
           f="aic-$(date -u +%Y%m%dT%H%M%SZ).dump"
