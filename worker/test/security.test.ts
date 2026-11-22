@@ -137,15 +137,21 @@ describe('owner tools', () => {
 });
 
 describe('delivery → invoice automation', () => {
-  it('prepares exactly one draft invoice when a project is delivered', async () => {
+  it('blocks delivery until the invoice is paid, then schedules delivery automatically', async () => {
     const [p] = await sql`insert into public.projects(name, scope, budget_minor, currency) values ('Inv test', 'scope', 50000, 'USD') returning id`;
-    for (const s of ['in_progress', 'in_qa', 'ready_for_delivery', 'delivered']) await sql`update public.projects set status = ${s} where id = ${p.id}`;
-    let inv = await sql`select status, amount_minor, currency from public.invoices where project_id = ${p.id}`;
-    expect(inv).toHaveLength(1);
-    expect(inv[0]).toMatchObject({ status: 'draft', currency: 'USD' });
-    expect(Number(inv[0].amount_minor)).toBe(50000);
-    await sql`update public.projects set status = 'accepted' where id = ${p.id}`;
-    inv = await sql`select id from public.invoices where project_id = ${p.id}`;
-    expect(inv).toHaveLength(1);
+    for (const s of ['in_progress', 'in_qa', 'ready_for_delivery']) await sql`update public.projects set status = ${s} where id = ${p.id}`;
+    await expect(sql`update public.projects set status = 'delivered' where id = ${p.id}`).rejects.toThrow(/not paid/);
+    const [inv] = await asOwner(sql, (tx) => tx`select * from public.owner_create_invoice(${p.id}, 50000, 'USD', 7, null, null)`);
+    await asOwner(sql, (tx) => tx`select public.owner_transition('invoice', ${inv.id}, 'issued', null)`);
+    await asOwner(sql, (tx) => tx`select * from public.owner_record_payment(${inv.id}, 50000, 'USD', 'bank_transfer', 'TX-1', true, 'statement_line', 'Bank line 2026-11-22 #7', null, null)`);
+    expect((await sql`select status from public.tasks where type = 'project.deliver' and entity_id = ${p.id}`)[0].status).toBe('pending');
+    await sql`update public.projects set status = 'delivered' where id = ${p.id}`;   // now allowed
+  });
+  it('auto-approval only happens for action types the policy marks "auto"', async () => {
+    const [{ id: a1 }] = await sql`select public.request_approval('opportunity.pursue', 'x', 'scoring_engine', 'r', 'a', 'b') as id`;
+    const [{ id: a2 }] = await sql`select public.request_approval('delivery.send', 'y', 'project_manager', 'r', 'a', 'b') as id`;
+    expect((await sql`select public.system_auto_approve(${a1}) as ok`)[0].ok).toBe(true);
+    expect((await sql`select public.system_auto_approve(${a2}) as ok`)[0].ok).toBe(false);
+    await expect(asOwner(sql, (tx) => tx`select public.system_auto_approve(${a2})`)).rejects.toThrow(/permission denied/);
   });
 });

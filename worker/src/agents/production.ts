@@ -3,8 +3,8 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
 import { sha256, untrusted } from '../sanitize.js';
-import { enqueue, requestApproval } from '../queue.js';
-import { logEvent } from '../db.js';
+import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
+import { getSetting, logEvent } from '../db.js';
 import type { Tx } from '../db.js';
 
 // ---------------------------------------------------------------------------
@@ -148,10 +148,14 @@ export const reviewDeliverable: Handler = async (ctx) => {
   if (d.status !== 'in_qa') return finish(ctx, async () => ({ skipped: `deliverable ${d.status}` }));
   const criteria = (d.acceptance_criteria as string[] | null) ?? ['Deliverable fully addresses the work item.'];
   const staticIssues = staticChecks(String(d.content), String(d.format));
+  const policy = await getSetting<{ reviewers_required: number }>(ctx.sql, 'qa.policy', { reviewers_required: 2 });
+  const prior = await ctx.sql`select verdict, model from public.qa_reviews where deliverable_id = ${id} order by created_at`;
+  const reviewNo = prior.length + 1;
+  const avoid = [d.produced_by_model as string, ...prior.map((p) => p.model as string)].filter(Boolean);
 
   const res = await ctx.ai.generate({ roleKey: 'qa_reviewer', taskId: ctx.task.id, tier: 'strong', schema: QaSchema, maxTokens: 1800,
-    avoidModel: d.produced_by_model as string | undefined, temperature: 0,
-    messages: [{ role: 'user', content: `You are an independent QA reviewer. You did NOT produce this deliverable. Check it strictly against EACH acceptance criterion.
+    avoidModel: avoid, temperature: 0,
+    messages: [{ role: 'user', content: `You are independent QA reviewer #${reviewNo} of ${policy.reviewers_required}. You did NOT produce this deliverable and you have not seen other reviews. The client pays only for flawless work: check it strictly against EACH acceptance criterion, and also flag factual errors, fake links/images, unfinished parts, unclear writing or anything a demanding client would reject.
 A criterion is met only if the deliverable itself demonstrates it — quote or point to the exact part as evidence. Do not give the benefit of the doubt.
 Return JSON {criteria_results:[{criterion, met, evidence}], issues:[...], summary}. Include every criterion below exactly once.
 
@@ -170,6 +174,11 @@ ${untrusted(`deliverable ${d.title} v${d.version} (${d.format})`, String(d.conte
   return finish(ctx, async (tx) => {
     await tx`insert into public.qa_reviews(deliverable_id, reviewer_role, reviewer_task, verdict, criteria_results, issues, summary, model)
         values (${id}, 'qa_reviewer', ${ctx.task.id}, ${verdict}, ${tx.json(qa.criteria_results as never)}, ${issues}, ${qa.summary}, ${res.model})`;
+    if (verdict === 'pass' && reviewNo < policy.reviewers_required) {
+      await enqueue(tx, { type: 'qa.review', key: `qa:${id}:${reviewNo + 1}`, role: 'qa_reviewer', entityType: 'deliverable', entityId: id,
+        input: { deliverable_id: id }, priority: 58, title: `QA #${reviewNo + 1}: ${String(d.title).slice(0, 70)} v${d.version}`, timeoutSeconds: 300 });
+      return { verdict, review: reviewNo, next: 'second independent review', model: res.model };
+    }
     if (verdict === 'pass') {
       await tx`update public.deliverables set status = 'approved' where id = ${id}`;
       if (d.requirement_id) await tx`update public.requirements set status = 'met' where id = ${d.requirement_id}`;
@@ -212,7 +221,8 @@ async function maybePrepareDelivery(tx: Tx, projectId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// project.prepare_delivery — Project Manager (deterministic)
+// project.prepare_delivery — Project Manager: work is done and QA-approved → request payment.
+// Deliverables are NOT released until the invoice is paid (enforced by the database).
 // ---------------------------------------------------------------------------
 export const prepareDelivery: Handler = async (ctx) => {
   const projectId = String(ctx.task.input.project_id);
@@ -225,27 +235,74 @@ export const prepareDelivery: Handler = async (ctx) => {
       where project_id = ${projectId} order by work_item, version desc`;
   const notApproved = items.filter((w) => !dels.find((d) => d.work_item === w.key && d.status === 'approved'));
   if (notApproved.length) throw new Error(`not all deliverables approved: ${notApproved.map((w) => w.key).join(', ')}`);
-  const reviews = await ctx.sql`select deliverable_id, verdict, summary from public.qa_reviews where deliverable_id = any(${dels.map((d) => d.id)}::uuid[]) and verdict = 'pass'`;
 
   return finish(ctx, async (tx) => {
     if (p.status === 'in_progress') await tx`update public.projects set status = 'in_qa' where id = ${projectId}`;
     await tx`update public.projects set status = 'ready_for_delivery' where id = ${projectId}`;
     for (const d of dels) await tx`update public.deliverables set status = 'ready_for_delivery' where id = ${d.id} and status = 'approved'`;
-    const manifest = dels.map((d) => `- ${d.title} (v${d.version}, sha256 ${String(d.content_hash).slice(0, 12)}…) — QA: ${reviews.find((r) => r.deliverable_id === d.id)?.summary ?? 'passed'}`).join('\n');
+    let [inv] = await tx`select * from public.invoices where project_id = ${projectId} and status <> 'void' order by created_at limit 1`;
+    if (!inv && Number(p.budget_minor ?? 0) > 0) {
+      [inv] = await tx`insert into public.invoices(number, project_id, client_id, due_date, amount_minor, currency, notes)
+          values ('INV-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('public.invoice_number_seq')::text, 5, '0'), ${projectId}, ${p.client_id},
+                  current_date + 7, ${p.budget_minor}, ${p.currency}, 'Payment due before release of the deliverables.') returning *`;
+    }
+    if (inv && inv.status === 'draft') await tx`update public.invoices set status = 'issued' where id = ${inv.id}`;
+    if (!inv) {   // zero-price project: deliver immediately
+      await enqueue(tx, { type: 'project.deliver', key: `deliver-free:${projectId}`, role: 'project_manager', entityType: 'project', entityId: projectId,
+        input: { project_id: projectId }, priority: 85, title: 'Deliver (no payment due)' });
+      return { deliverables: dels.length, invoice: null };
+    }
+    const manifest = dels.map((d) => `- ${d.title}`).join('\n');
     const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
-        values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Delivery: ' + p.name}) returning id`;
-    const body = `Hello,\n\nThe deliverables for "${p.name}" are complete and have passed our independent quality review:\n\n${manifest}\n\nPlease review them and let us know if anything needs adjustment within the agreed revision scope.\n\nThis message was prepared by an AI-assisted business system and reviewed by its owner.`;
+        values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Your project is ready: ' + p.name}) returning id`;
+    const body = `Hello,\n\nGood news: the work for "${p.name}" is complete and has passed our independent quality review (${dels.length} deliverable${dels.length > 1 ? 's' : ''}):\n\n${manifest}\n\nInvoice ${inv.number}: ${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}, due ${inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : inv.due_date}.\nThe deliverables are released automatically as soon as payment is received.\n\nThis message was prepared by an AI-assisted business system.`;
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${body}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Invoice ' + inv.number + ' — ' + p.name}, ${body}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
     const approvalId = await requestApproval(tx, {
-      actionType: 'message.send', title: `Deliver project: ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
-      reason: 'All deliverables passed independent QA. Delivery message and package are ready.', evidence: dels.map((d) => ({ deliverable: d.title, version: d.version })),
-      expectedBenefit: 'Completes the project and allows final invoicing.', risk: 'Client-facing delivery; verify the content before sending.', riskLevel: 'medium',
-      ifApproved: 'Delivery message becomes approved; send it with the deliverable files (download them from the Production page), then mark the project Delivered.',
-      ifRejected: 'Nothing is sent; the project stays Ready for delivery.', entityType: 'project', entityId: projectId, taskId: ctx.task.id,
-      key: `delivery:${projectId}:${ctx.task.id}`, payload: { message_id: msg.id },
+      actionType: 'payment.request.send', title: `Send invoice ${inv.number}: ${String(p.name).slice(0, 80)}`, requestedBy: 'project_manager',
+      reason: 'All deliverables passed independent QA. Requesting payment before releasing them.', evidence: dels.map((d) => ({ deliverable: d.title, version: d.version })),
+      expectedBenefit: `Collect ${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}.`, risk: 'Client-facing payment request.', riskLevel: 'low',
+      ifApproved: 'The payment request is sent. Deliverables are released automatically once the payment is confirmed.',
+      ifRejected: 'Nothing is sent; the invoice stays open.', entityType: 'project', entityId: projectId, taskId: ctx.task.id,
+      key: `payreq:${projectId}:${inv.id}`, payload: { message_id: msg.id, invoice_id: inv.id }, costMinor: 0, currency: String(inv.currency),
     });
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
-    return { deliverables: dels.length, message_id: msg.id, approval_id: approvalId };
+    const auto = await autoApproveIfPolicy(tx, approvalId);
+    return { deliverables: dels.length, invoice: inv.number, message_id: msg.id, auto_approved: auto };
+  });
+};
+
+// ---------------------------------------------------------------------------
+// project.deliver — runs only after the invoice is paid (scheduled by the DB trigger).
+// ---------------------------------------------------------------------------
+export const deliverProject: Handler = async (ctx) => {
+  const projectId = String(ctx.task.input.project_id);
+  const [paid] = await ctx.sql`select public.project_is_paid(${projectId}) as ok`;
+  if (!paid.ok) throw new PermanentError('invoice not paid — delivery refused');
+  const [p] = await ctx.sql`select p.*, l.contact_id, l.id as lead_id, c.email as contact_email from public.projects p
+      left join public.leads l on l.id = p.lead_id left join public.contacts c on c.id = l.contact_id where p.id = ${projectId}`;
+  if (!p) throw new PermanentError('project not found');
+  if (p.status !== 'ready_for_delivery') return finish(ctx, async () => ({ skipped: `project ${p.status}` }));
+  const dels = await ctx.sql`select id, title, format, content from public.deliverables where project_id = ${projectId} and status = 'ready_for_delivery' order by work_item`;
+
+  return finish(ctx, async (tx) => {
+    const body = `Hello,\n\nThank you for your payment. Here are the deliverables for "${p.name}":\n\n` +
+      dels.map((d) => `===== ${d.title} =====\n\n${d.content}`).join('\n\n') +
+      `\n\nIf anything needs adjustment within the agreed scope, just reply to this message.\n\nThis message was prepared by an AI-assisted business system.`;
+    const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
+        values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Delivery: ' + p.name}) returning id`;
+    const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key)
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${body}, ${ctx.task.id}, ${'delivery:' + projectId}) returning id`;
+    const approvalId = await requestApproval(tx, {
+      actionType: 'delivery.send', title: `Deliver (paid): ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
+      reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),
+      riskLevel: 'low', ifApproved: 'The delivery is sent to the client.', ifRejected: 'Delivery is held.',
+      entityType: 'project', entityId: projectId, taskId: ctx.task.id, key: `delivery:${projectId}`, payload: { message_id: msg.id },
+    });
+    await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
+    for (const d of dels) await tx`update public.deliverables set status = 'delivered' where id = ${d.id}`;
+    await tx`update public.projects set status = 'delivered', delivered_at = now() where id = ${projectId}`;
+    const auto = await autoApproveIfPolicy(tx, approvalId);
+    return { delivered: dels.length, message_id: msg.id, auto_approved: auto };
   });
 };

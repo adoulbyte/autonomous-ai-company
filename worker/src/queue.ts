@@ -61,3 +61,9 @@ export async function requestApproval(sql: Sql | Tx, a: {
     p_idempotency_key => ${a.key}) as id`;
   return r.id;
 }
+
+/** Auto-approve if (and only if) autonomy.policy marks this action type "auto". Returns whether it was approved. */
+export async function autoApproveIfPolicy(sql: Sql | Tx, approvalId: string): Promise<boolean> {
+  const [r] = await sql<{ ok: boolean }[]>`select public.system_auto_approve(${approvalId}) as ok`;
+  return r.ok;
+}

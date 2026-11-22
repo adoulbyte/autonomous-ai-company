@@ -16,6 +16,7 @@ const ai: Responder = (prompt) => {
     stated_budget_usd: 800, est_revenue_usd: 800, est_hours: 10, skills_required: ['python', 'csv', 'automation'], skill_fit: 0.9,
     difficulty: 0.3, competition: 0.4, risk: 0.15, risk_flags: [], p_win: 0.45, p_paid: 0.9, evidence_quality: 0.85, strategic_value: 0.6,
     confidence: 0.7, unknowns: ['data volume'], rationale: 'Explicit budget ($800) and clear scope: CSV validation + Markdown report.' } };
+  if (prompt.includes('You are a pricing analyst')) return { body: { low_usd: 600, typical_usd: 900, high_usd: 1400, typical_hourly_rate_usd: 75, rationale: 'Small Python automation with validation and reporting; typical remote rates 50-100 USD/h for ~10h.' } };
   if (prompt.includes('Write a first reply')) return { body: {
     subject: 'Re: Python CSV automation for Acme Logistics',
     body: `Hello Acme team,\n\nYou mentioned needing a Python automation that validates daily shipment CSV exports and produces a Markdown summary plus a cleaned CSV. We can build this as a small, documented script with tests. A good first step would be a sample export (anonymised is fine) so we can confirm the validation rules.\n\nCould you share how many rows a typical file has, and which fields must never be empty?\n\n${DISCLOSURE}`,
@@ -30,7 +31,7 @@ const ai: Responder = (prompt) => {
     const base = `import csv, sys\n\ndef validate(path):\n    ok, bad = [], []\n    with open(path) as f:\n        for row in csv.DictReader(f):\n            (bad if not row.get('shipment_id') else ok).append(row)\n    return ok, bad\n\nif __name__ == '__main__':\n    ok, bad = validate(sys.argv[1])\n    print(f"# Shipment report\\n\\n- valid rows: {len(ok)}\\n- rejected rows (empty shipment_id): {len(bad)}")\n`;
     return { body: { title: 'validator.py', content: producerCalls === 1 ? base + '\n# TODO handle dates\n' : base, notes: 'Single-file script.', limitations: ['Not run against real client data'] } };
   }
-  if (prompt.includes('independent QA reviewer')) {
+  if (prompt.includes('independent QA reviewer #')) {
     const hasTodo = prompt.includes('TODO');
     return { body: { criteria_results: [
       { criterion: 'Script rejects rows with empty shipment_id', met: true, evidence: "bad if not row.get('shipment_id')" },
@@ -65,7 +66,7 @@ describe('end-to-end business workflow', () => {
     const ev = await sql`select e.* from public.evidence e join public.opportunity_evidence oe on oe.evidence_id = e.id where oe.opportunity_id = ${oppId}`;
     expect(ev[0].excerpt).toContain('Budget around $800');
     expect(ev[0].url).toBe('https://news.ycombinator.com/item?id=90000010');
-    expect(acme.status).toBe('shortlisted');
+    expect(acme.status).toBe('pursuing');   // shortlisted, then pursued automatically
     expect(Number(acme.score)).toBeGreaterThanOrEqual(62);
     expect(acme.score_breakdown.components).toHaveLength(10);
     expect(acme.decision_reasons.join(' ')).toMatch(/shortlist threshold/);
@@ -74,7 +75,8 @@ describe('end-to-end business workflow', () => {
     expect(bakery.status).toBe('rejected');
     expect(bakery.decision_reasons[0]).toMatch(/Prefilter/);
     const [appr] = await sql`select * from public.approvals where action_type = 'opportunity.pursue' and entity_id = ${oppId}`;
-    expect(appr.status).toBe('pending');
+    expect(appr.status).toBe('executed');                 // autonomy policy: pursuit is automatic
+    expect(appr.decided_by).toBe('policy:auto');
     expect(appr.if_approved).toBeTruthy(); expect(appr.if_rejected).toBeTruthy(); expect(appr.evidence.length).toBeGreaterThan(0);
     // re-running discovery deduplicates
     await sql`update public.sources set next_run_at = now() - interval '1 minute' where key = 'hn_seeking_freelancer'`;
@@ -82,18 +84,20 @@ describe('end-to-end business workflow', () => {
     expect((await sql`select count(*)::int n from public.opportunities`)[0].n).toBe(opps.length);
   });
 
-  it('7 + 14: owner approval → lead/contact in CRM → honest outreach draft gated by approval', async () => {
-    const [appr] = await sql`select id from public.approvals where action_type = 'opportunity.pursue' and entity_id = ${oppId}`;
-    await asOwner(sql, (tx) => tx`select public.decide_approval(${appr.id}, true, 'go')`);
+  it('7 + 14: automatic pursuit → market-priced lead in CRM → honest outreach draft', async () => {
     await run('w-2');
     const [lead] = await sql`select * from public.leads where opportunity_id = ${oppId}`;
     leadId = lead.id;
     expect(lead.stage).toBe('qualified');
+    expect(Number(lead.value_minor)).toBe(80000);          // client stated budget respected (never exceeded)
+    expect(lead.quote.basis.join(' ')).toMatch(/stated budget/);
     const [contact] = await sql`select * from public.contacts where id = ${lead.contact_id}`;
     expect(contact.email).toBe('ops@acme-logistics.example');
     const [msg] = await sql`select m.* from public.messages m join public.conversations c on c.id = m.conversation_id where c.lead_id = ${leadId}`;
     expect(msg.status).toBe('awaiting_approval');
     expect(msg.body).toContain(DISCLOSURE);
+    const [salesTask] = await sql`select input from public.tasks where type = 'lead.draft_outreach' and entity_id = ${leadId}`;
+    expect(salesTask).toBeDefined();
     await expect(asOwner(sql, (tx) => tx`select public.owner_mark_message_sent(${msg.id}, null)`)).rejects.toThrow(/must be approved/);
     await asOwner(sql, (tx) => tx`select public.decide_approval(${msg.approval_id}, true, null)`);
     await asOwner(sql, (tx) => tx`select public.owner_mark_message_sent(${msg.id}, 'sent from mailbox')`);
@@ -118,18 +122,21 @@ describe('end-to-end business workflow', () => {
     const dels = await sql`select * from public.deliverables where project_id = ${projectId} order by version`;
     expect(dels.map((d) => [d.version, d.status])).toEqual([[1, 'superseded'], [2, 'ready_for_delivery']]);
     const qa = await sql`select q.* from public.qa_reviews q join public.deliverables d on d.id = q.deliverable_id where d.project_id = ${projectId} order by q.created_at`;
-    expect(qa.map((q) => q.verdict)).toEqual(['fail', 'pass']);
+    expect(qa.map((q) => q.verdict)).toEqual(['fail', 'pass', 'pass']);   // two independent passes required
     expect(qa.every((q) => q.reviewer_role === 'qa_reviewer')).toBe(true);
     expect(qa[0].issues.join(' ')).toMatch(/TODO|placeholder/);
     const [p] = await sql`select status from public.projects where id = ${projectId}`;
     expect(p.status).toBe('ready_for_delivery');
-    const [deliveryAppr] = await sql`select * from public.approvals where entity_id = ${projectId} and action_type = 'message.send'`;
-    expect(deliveryAppr.status).toBe('pending');
+    const [payReq] = await sql`select * from public.approvals where entity_id = ${projectId} and action_type = 'payment.request.send'`;
+    expect(payReq.status).toBe('pending');
+    const [inv] = await sql`select status, amount_minor from public.invoices where project_id = ${projectId}`;
+    expect(inv.status).toBe('issued'); expect(Number(inv.amount_minor)).toBe(80000);
+    // payment-first: the client cannot receive the work before paying
+    await expect(asOwner(sql, (tx) => tx`select public.owner_transition('project', ${projectId}, 'delivered', null)`)).rejects.toThrow(/not paid/);
   });
 
   it('15-17: finance records; revenue only counts with evidence; metrics reflect real records', async () => {
-    const [inv] = await asOwner(sql, (tx) => tx`select * from public.owner_create_invoice(${projectId}, 80000, 'USD', 14, null, null)`);
-    await asOwner(sql, (tx) => tx`select public.owner_transition('invoice', ${inv.id}, 'issued', null)`);
+    const [inv] = await sql`select * from public.invoices where project_id = ${projectId}`;
     const [pending] = await asOwner(sql, (tx) => tx`select * from public.owner_record_payment(${inv.id}, 80000, 'USD', 'redotpay', 'RP-TEST-1', false)`);
     let [fin] = await asOwner(sql, (tx) => tx`select * from public.v_finance_by_currency where currency = 'USD'`);
     expect(Number(fin.confirmed_revenue_minor)).toBe(0);
@@ -139,9 +146,13 @@ describe('end-to-end business workflow', () => {
     [fin] = await asOwner(sql, (tx) => tx`select * from public.v_finance_by_currency where currency = 'USD'`);
     expect(Number(fin.confirmed_revenue_minor)).toBe(80000);
     expect((await sql`select status from public.invoices where id = ${inv.id}`)[0].status).toBe('paid');
+    await run('w-5');   // payment confirmed → delivery released automatically
+    expect((await sql`select status from public.projects where id = ${projectId}`)[0].status).toBe('delivered');
+    const [delivery] = await sql`select m.status, m.body from public.messages m join public.conversations c on c.id = m.conversation_id where c.project_id = ${projectId} and m.subject like 'Delivery:%'`;
+    expect(delivery.body).toContain('Shipment report');
     const m = await computeMetrics(sql);
     expect(m.leads_won).toBe(1); expect(m.revenue_confirmed_minor).toBe(80000);
-    expect(m.qa_failure_rate).toBeCloseTo(0.5); expect(m.revisions).toBe(1);
+    expect(m.qa_failure_rate).toBeCloseTo(1 / 3); expect(m.revisions).toBe(1);
     expect((await sql`select count(*)::int n from public.metric_snapshots`)[0].n).toBeGreaterThan(10);
     expect((await sql`select count(*)::int n from public.audit_log`)[0].n).toBeGreaterThan(10);
     const dead = await sql`select type, error from public.tasks where status = 'dead'`;

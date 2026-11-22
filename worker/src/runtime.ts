@@ -6,7 +6,8 @@ import { DeferError, PermanentError } from './errors.js';
 import { LeaseLostError, type Handler } from './agents/context.js';
 import { analyzeOpportunity, runSource, scoreOpportunityTask } from './agents/opportunity.js';
 import { draftOutreach, triageMessage } from './agents/sales.js';
-import { planProject, prepareDelivery, produceDeliverable, reviewDeliverable } from './agents/production.js';
+import { deliverProject, planProject, prepareDelivery, produceDeliverable, reviewDeliverable } from './agents/production.js';
+import { quoteLead } from './agents/pricing.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
 
@@ -20,6 +21,8 @@ export const HANDLERS: Record<string, Handler> = {
   'production.execute': produceDeliverable,
   'qa.review': reviewDeliverable,
   'project.prepare_delivery': prepareDelivery,
+  'project.deliver': deliverProject,
+  'pricing.quote': quoteLead,
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'system.health_check': healthCheck,

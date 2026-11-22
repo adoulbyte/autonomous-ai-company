@@ -23,7 +23,7 @@ export interface GenerateOptions<T> {
   maxTokens?: number;
   temperature?: number;
   /** Prefer a different model than this one (QA independence). */
-  avoidModel?: string;
+  avoidModel?: string | string[];
   /** Allow falling back to a lower tier. Never used for QA or client deliverables. */
   allowDowngrade?: boolean;
 }
@@ -95,7 +95,8 @@ export class AiGateway {
     await this.checkBudgets(opts.roleKey);
     let models = await this.candidates(opts.tier, opts.allowDowngrade);
     if (opts.avoidModel) {
-      models = [...models.filter((m) => m.model !== opts.avoidModel), ...models.filter((m) => m.model === opts.avoidModel)];
+      const avoid = new Set(Array.isArray(opts.avoidModel) ? opts.avoidModel : [opts.avoidModel]);
+      models = [...models.filter((m) => !avoid.has(m.model)), ...models.filter((m) => avoid.has(m.model))];
     }
     if (!models.length) throw new DeferError(`no AI model available for tier ${opts.tier} (all disabled, cooling down, or missing API keys)`, 900);
 

@@ -201,8 +201,8 @@ export const scoreOpportunityTask: Handler = async (ctx) => {
     await tx`insert into public.opportunity_decisions(opportunity_id, decision, score, score_breakdown, reasons, weights_version, decided_by)
         values (${id}, ${r.decision}, ${r.score}, ${tx.json(r as never)}, ${r.reasons}, ${r.weights_version}, 'agent:scoring_engine')`;
     if (r.status === 'shortlisted') {
-      const { requestApproval } = await import('../queue.js');
-      await requestApproval(tx, {
+      const { requestApproval, autoApproveIfPolicy } = await import('../queue.js');
+      const approvalId = await requestApproval(tx, {
         actionType: 'opportunity.pursue', title: `Pursue: ${String(opp.title).slice(0, 100)}`, requestedBy: 'scoring_engine',
         reason: r.reasons.join(' · '),
         evidence: [{ type: 'url', value: opp.url }, { type: 'score', value: r.score }],
@@ -213,6 +213,7 @@ export const scoreOpportunityTask: Handler = async (ctx) => {
         ifRejected: 'The opportunity stays shortlisted without action; you can reject or monitor it from the Opportunities page.',
         entityType: 'opportunity', entityId: id, taskId: ctx.task.id, key: `pursue:${id}`,
       });
+      if (await autoApproveIfPolicy(tx, approvalId)) await tx`select public.execute_approved_actions()`;
     }
     return { score: r.score, decision: r.decision, status: r.status };
   });

@@ -128,3 +128,15 @@ describe('separate DB password secret', () => {
     expect(p).toMatchObject({ username: 'postgres.abcdefgh', password: 'Real123' });
   });
 });
+
+import { decidePrice } from '../src/agents/pricing.js';
+describe('market pricing', () => {
+  const policy = { min_price_minor: 10000, min_hourly_minor: 3000, currency: 'USD', never_exceed_stated_budget: true };
+  it('respects a stated client budget', () => {
+    expect(decidePrice({ statedBudgetMinor: 80000, aiTypicalMinor: 120000, comparablesMedianMinor: null, estHours: 10, policy }).priceMinor).toBe(80000);
+  });
+  it('blends market estimate and comparables, never below the cost floor', () => {
+    expect(decidePrice({ statedBudgetMinor: null, aiTypicalMinor: 90000, comparablesMedianMinor: 70000, estHours: 10, policy }).priceMinor).toBe(80000);
+    expect(decidePrice({ statedBudgetMinor: null, aiTypicalMinor: 5000, comparablesMedianMinor: null, estHours: 20, policy }).priceMinor).toBe(60000);
+  });
+});
