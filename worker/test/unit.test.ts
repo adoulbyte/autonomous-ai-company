@@ -94,3 +94,16 @@ describe('deterministic gates', () => {
     expect(staticChecks('# Title\n\n' + 'Real content. '.repeat(30), 'markdown')).toEqual([]);
   });
 });
+
+import { parseDbUrl } from '../src/db.js';
+describe('database URL parsing', () => {
+  it('accepts the Supabase pooler format and passwords with special characters', () => {
+    const a = parseDbUrl('postgresql://postgres.abcd:p@ss#w/rd?x@aws-0-eu-west-1.pooler.supabase.com:5432/postgres');
+    expect(a).toMatchObject({ host: 'aws-0-eu-west-1.pooler.supabase.com', port: 5432, username: 'postgres.abcd', password: 'p@ss#w/rd?x', database: 'postgres' });
+    expect(parseDbUrl(' "postgres://u:p%40q@h:6543/db" ').password).toBe('p@q');
+  });
+  it('rejects placeholders and garbage without leaking the password', () => {
+    expect(() => parseDbUrl('postgresql://postgres.x:[YOUR-PASSWORD]@h:5432/postgres')).toThrow(/placeholder/);
+    try { parseDbUrl('https://supersecretvalue'); } catch (e) { expect((e as Error).message).not.toContain('supersecretvalue'); }
+  });
+});
