@@ -129,6 +129,8 @@ export function staticChecks(content: string, format: string): string[] {
   if (format === 'json') { try { JSON.parse(content); } catch { issues.push('Declared JSON format but content is not valid JSON.'); } }
   if (format === 'markdown' && /^#{1,6}\s*$/m.test(content)) issues.push('Markdown contains empty headings.');
   if ((content.match(/```/g) ?? []).length % 2 !== 0) issues.push('Unbalanced code fences.');
+  const fake = content.match(/https?:\/\/(www\.)?(example\.(com|org|net)|placeholder\.[a-z]+|via\.placeholder\.com|your-?domain\.[a-z]+)[^\s)"']*/i);
+  if (fake) issues.push(`References a placeholder/fictitious URL (${fake[0]}); deliverables must not contain fake links or images.`);
   return issues;
 }
 

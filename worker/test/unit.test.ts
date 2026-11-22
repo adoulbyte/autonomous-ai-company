@@ -92,6 +92,7 @@ describe('deterministic gates', () => {
     expect(staticChecks('x'.repeat(300) + ' TODO finish', 'markdown').join()).toMatch(/placeholder/);
     expect(staticChecks('{"a":', 'json').join()).toMatch(/JSON/);
     expect(staticChecks('# Title\n\n' + 'Real content. '.repeat(30), 'markdown')).toEqual([]);
+    expect(staticChecks('# T\n\n' + 'Real content. '.repeat(30) + '![d](https://example.com/architecture-diagram.png)', 'markdown').join()).toMatch(/placeholder\/fictitious URL/);
   });
 });
 
