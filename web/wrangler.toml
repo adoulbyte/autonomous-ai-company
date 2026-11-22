@@ -2,6 +2,8 @@
 # No server code runs here: the app is a static SPA; all data access is enforced by Supabase RLS.
 name = "aic-command-center"
 compatibility_date = "2026-11-01"
+# Cloudflare account ID is an identifier, not a credential (the API token is the secret).
+account_id = "<cloudflare-account-id>"
 
 [assets]
 directory = "./dist"

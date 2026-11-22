@@ -16,7 +16,7 @@ Never use the `service_role` / secret key anywhere in this project.
 
 ## 2. Cloudflare (hosting the private web app) — free plan, no card
 1. Sign up at https://dash.cloudflare.com/sign-up (free).
-2. **Account ID**: shown on the Workers & Pages overview → secret `CLOUDFLARE_ACCOUNT_ID`.
+2. **Account ID**: already configured in `web/wrangler.toml` and the workflows (it is an identifier, not a secret).
 3. **My Profile → API Tokens → Create Token → template “Edit Cloudflare Workers”** → under Permissions click **+ Add more** and add **Account · Workers AI · Read** (this lets the same token call Cloudflare's free Workers AI models — the system's primary AI provider) → restrict to your account → create → secret `CLOUDFLARE_API_TOKEN`.
 4. The first deploy creates `https://aic-command-center.<your-subdomain>.workers.dev` (Cloudflare asks you to pick the workers.dev subdomain once in the dashboard if you have never used Workers).
 
