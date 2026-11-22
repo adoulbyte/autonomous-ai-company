@@ -112,3 +112,11 @@ describe('database URL labels', () => {
     expect(parseDbUrl('session pooler: postgresql://postgres.ref:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres').host).toBe('aws-1-eu-west-3.pooler.supabase.com');
   });
 });
+import { applySupabasePoolerUser } from '../src/db.js';
+describe('supabase pooler user', () => {
+  it('adds the project ref for the pooler when missing', () => {
+    const p = parseDbUrl('postgresql://postgres:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres');
+    expect(applySupabasePoolerUser(p, { SUPABASE_URL: 'https://abcdefgh.supabase.co' } as NodeJS.ProcessEnv).username).toBe('postgres.abcdefgh');
+    expect(applySupabasePoolerUser(parseDbUrl('postgresql://postgres.x:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres'), {} as NodeJS.ProcessEnv).username).toBe('postgres.x');
+  });
+});

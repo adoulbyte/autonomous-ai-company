@@ -26,8 +26,20 @@ export function parseDbUrl(raw: string): ParsedDbUrl {
   return { host, port: Number(port ?? 5432), database, username: decodeURIComponent(username), password: pw, params: new URLSearchParams(query ?? '') };
 }
 
+/** Supabase's pooler (Supavisor) needs the user as "postgres.<project-ref>"; derive the ref from SUPABASE_URL if missing. */
+export function applySupabasePoolerUser(p: ParsedDbUrl, env: NodeJS.ProcessEnv = process.env): ParsedDbUrl {
+  if (!/pooler\.supabase\.com$/.test(p.host) || p.username.includes('.')) return p;
+  const ref = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? '').match(/^https:\/\/([a-z0-9]+)\.supabase\.co/)?.[1] ?? env.SUPABASE_PROJECT_REF;
+  return ref ? { ...p, username: `${p.username}.${ref}` } : p;
+}
+
+export function describeDbTarget(url: string): string {
+  try { const p = applySupabasePoolerUser(parseDbUrl(url)); return `host=${p.host} port=${p.port} db=${p.database} user=${p.username.replace(/\..*/, '.<ref>')}${p.username.includes('.') ? '' : ' (no project ref!)'} password=${p.password ? 'set' : 'MISSING'}`; }
+  catch (e) { return (e as Error).message; }
+}
+
 export function connect(url: string, opts: { max?: number } = {}): Sql {
-  const p = parseDbUrl(url);
+  const p = applySupabasePoolerUser(parseDbUrl(url));
   const local = /^(localhost|127\.0\.0\.1|::1)$/.test(p.host) || p.params.get('sslmode') === 'disable';
   return postgres({
     host: p.host, port: p.port, database: p.database, username: p.username, password: p.password,

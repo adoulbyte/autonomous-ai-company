@@ -22,13 +22,21 @@ jobs:
           sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.ok == 'true'
+        with: { node-version: 22 }
+      - run: npm ci
+        if: steps.cfg.outputs.ok == 'true'
+        working-directory: worker
       - name: Dump, compress, encrypt
         if: steps.cfg.outputs.ok == 'true'
-        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', PASSPHRASE: '${{ secrets.BACKUP_PASSPHRASE }}' }
+        env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', SUPABASE_URL: '${{ secrets.VITE_SUPABASE_URL }}', PASSPHRASE: '${{ secrets.BACKUP_PASSPHRASE }}' }
         run: |
           set -euo pipefail
           f="aic-$(date -u +%Y%m%dT%H%M%SZ).dump"
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --schema=ops --file "$f"
+          /usr/lib/postgresql/17/bin/pg_dump "$(cd worker && npx tsx src/normalizeDbUrl.ts)" --format=custom --no-owner --no-privileges --schema=public --schema=ops --file "$f"
           gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" --symmetric --cipher-algo AES256 -o "$f.gpg" "$f"
           rm "$f"; ls -la
       - uses: actions/upload-artifact@v4

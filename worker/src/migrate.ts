@@ -2,10 +2,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { connect } from './db.js';
+import { connect, describeDbTarget } from './db.js';
 
 /** Applies supabase/migrations/*.sql in order, exactly once each, inside transactions. */
 export async function migrate(databaseUrl: string, dir = join(dirname(fileURLToPath(import.meta.url)), '../../supabase/migrations'), log = console.log) {
+  log(`database target: ${describeDbTarget(databaseUrl)}`);
   const sql = connect(databaseUrl, { max: 1 });
   try {
     await sql`create schema if not exists ops`;
