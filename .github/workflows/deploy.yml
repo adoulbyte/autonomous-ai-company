@@ -5,26 +5,22 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency: { group: deploy, cancel-in-progress: false }
+concurrency:
+  group: deploy
+  cancel-in-progress: false
 jobs:
-  deploy:
+  database:
+    name: Database migrations + owner
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check required secrets
-        run: |
-          missing=""
-          for s in SUPABASE_DB_URL VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY OWNER_EMAIL CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
-            eval v="\${$s}"; [ -z "$v" ] && missing="$missing $s"
-          done
-          if [ -n "$missing" ]; then echo "::error::Missing repository secrets:$missing (see docs/SETUP.md)"; exit 1; fi
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$SUPABASE_DB_URL" ] || { echo "::error::Missing secret SUPABASE_DB_URL (see docs/SETUP.md)"; exit 1; }
+          [ -n "$OWNER_EMAIL" ] || { echo "::error::Missing secret OWNER_EMAIL (see docs/SETUP.md)"; exit 1; }
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
@@ -34,19 +30,47 @@ jobs:
         env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}' }
       - name: Register owner (idempotent)
         working-directory: worker
-        run: npm run bootstrap-owner || echo "::warning::Owner not registered yet — create the owner user in Supabase Auth, then re-run Deploy."
+        run: npm run bootstrap-owner
         env: { DATABASE_URL: '${{ secrets.SUPABASE_DB_URL }}', OWNER_EMAIL: '${{ secrets.OWNER_EMAIL }}' }
+
+  web:
+    name: Web app (Cloudflare Workers static assets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: database
+    steps:
+      - name: Check required secrets
+        id: cfg
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=""
+          for s in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            eval v="\${$s}"; [ -z "$v" ] && missing="$missing $s"
+          done
+          if [ -n "$missing" ]; then echo "::warning::Web deploy skipped — missing secrets:$missing (see docs/SETUP.md)"; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.ok == 'true'
+        with: { node-version: 22 }
       - name: Build web
+        if: steps.cfg.outputs.ok == 'true'
         working-directory: web
         run: npm ci && npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       - name: Guard — no service keys or DB URLs in the bundle
+        if: steps.cfg.outputs.ok == 'true'
         working-directory: web
         run: |
           if grep -rEl 'service_role|postgres(ql)?://|sb_secret_' dist; then echo "::error::secret-like content found in build"; exit 1; fi
-      - name: Deploy to Cloudflare Workers (static assets)
+      - name: Deploy to Cloudflare Workers
+        if: steps.cfg.outputs.ok == 'true'
         working-directory: web
         run: npx --yes wrangler@4 deploy
         env:
