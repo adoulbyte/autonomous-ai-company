@@ -65,7 +65,7 @@ export const analyticsSnapshot: Handler = async (ctx) => finish(ctx, async (tx) 
 const StrategySchema = z.object({
   summary: z.string().max(1500),
   recommendations: z.array(z.string().max(400)).max(8),
-  proposed_weights: z.record(z.number()).nullable(),
+  proposed_weights: z.record(z.string(), z.number()).nullable(),
   data_sufficient: z.boolean(),
 });
 

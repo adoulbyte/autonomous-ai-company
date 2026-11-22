@@ -25,6 +25,13 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
       - run: npm ci
         working-directory: worker
+      - name: Probe external endpoints (diagnostics; no secrets printed)
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+        run: |
+          probe() { echo "== $1"; curl -sS -o /tmp/b -w 'HTTP %{http_code} %{content_type} redirect=%{redirect_url}\n' "${@:2}"; head -c 300 /tmp/b; echo; }
+          probe catalog https://models.github.ai/catalog/models -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28'
+          probe inference https://models.github.ai/inference/chat/completions -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' -H 'Content-Type: application/json' -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Reply with the JSON {\"ok\":true}"}],"max_tokens":20}'
+          probe hn-search 'https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=%22Seeking%20freelancer%22&hitsPerPage=3'
       - name: Live pipeline test
         working-directory: worker
         run: npx vitest run test/live.test.ts --reporter=verbose

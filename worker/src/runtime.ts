@@ -47,6 +47,7 @@ export async function scheduleDueWork(sql: Sql, now = new Date()): Promise<Recor
     sources++;
   }
   const day = now.toISOString().slice(0, 10);
+  if (now.getUTCHours() < 2) await sql`select public.apply_retention()`; // once per night (pg_cron also runs it when available)
   await enqueue(sql, { type: 'analytics.snapshot', key: `analytics:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'business_intelligence', priority: 20, title: 'Metrics snapshot' });
   await enqueue(sql, { type: 'system.health_check', key: `health:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'orchestrator', priority: 25, title: 'System health check' });
   const week = Math.floor(now.getTime() / (7 * 86_400_000));

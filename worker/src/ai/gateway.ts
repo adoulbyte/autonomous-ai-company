@@ -9,7 +9,7 @@ const TIER_ORDER: Tier[] = ['fast', 'standard', 'strong'];
 
 export interface ModelRow {
   provider_key: string; model: string; tier: Tier; base_url: string; api_key_env: string;
-  priority: number; max_output_tokens: number | null;
+  priority: number; max_output_tokens: number | null; extra_headers?: Record<string, string>;
 }
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -47,7 +47,7 @@ export class AiGateway {
 
   async candidates(tier: Tier, allowDowngrade = false): Promise<ModelRow[]> {
     const rows = await this.sql<ModelRow[]>`
-      select m.provider_key, m.model, m.tier, p.base_url, p.api_key_env, p.priority, m.max_output_tokens
+      select m.provider_key, m.model, m.tier, p.base_url, p.api_key_env, p.priority, m.max_output_tokens, p.extra_headers
       from public.ai_models m join public.ai_providers p on p.key = m.provider_key
       where m.enabled and p.enabled and (m.cooldown_until is null or m.cooldown_until < now())`;
     const want = TIER_ORDER.indexOf(tier);
@@ -109,7 +109,8 @@ export class AiGateway {
         try {
           res = await this.fetchFn(`${m.base_url.replace(/\/$/, '')}/chat/completions`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json', authorization: `Bearer ${this.env[m.api_key_env]}` },
+            headers: { ...(m.extra_headers ?? {}), 'content-type': 'application/json', authorization: `Bearer ${this.env[m.api_key_env]}` },
+            redirect: 'manual',
             body: JSON.stringify({
               model: m.model,
               messages: attemptMessages,
@@ -146,10 +147,16 @@ export class AiGateway {
           errors.push(`${m.model}: ${msg}`); capacityFailures++;
           break;
         }
-        const json = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-        };
+        const raw = await res.text();
+        let json: { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+        try { json = JSON.parse(raw); } catch { json = {}; }
+        if (!Array.isArray(json.choices) || (res.status >= 300 && res.status < 400)) {
+          const msg = `unexpected provider response (HTTP ${res.status}, ${res.headers.get('content-type') ?? 'no content-type'}): ${raw.slice(0, 200)}`;
+          await this.record({ ...opts, provider: m.provider_key, model: m.model, status: 'error', latencyMs: latency, error: msg });
+          await this.cooldown(m, 600, msg);
+          errors.push(`${m.model}: ${msg}`); capacityFailures++;
+          break;
+        }
         const content = json.choices?.[0]?.message?.content ?? '';
         const usage = { promptTokens: json.usage?.prompt_tokens ?? 0, completionTokens: json.usage?.completion_tokens ?? 0 };
         const parsed = extractJson(content);

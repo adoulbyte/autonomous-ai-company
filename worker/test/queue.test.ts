@@ -115,3 +115,18 @@ describe('durable task queue', () => {
     await bad.end({ timeout: 1 });
   });
 });
+
+describe('retention', () => {
+  it('trims old operational logs but never business records or the audit log', async () => {
+    await sql`insert into public.ai_calls(at, role_key, status) values (now() - interval '400 days', 'x', 'ok'), (now(), 'x', 'ok')`;
+    await sql`select set_config('app.allow_log_retention', 'on', false)`;
+    await sql`insert into public.events(occurred_at, entity_type, event_type) values (now() - interval '400 days', 't', 'old')`;
+    await sql`select set_config('app.allow_log_retention', 'off', false)`;
+    const auditBefore = (await sql`select count(*)::int n from public.audit_log`)[0].n;
+    const r = (await sql`select public.apply_retention() as r`)[0].r;
+    expect(r.ai_calls).toBe(1); expect(r.events).toBe(1);
+    expect((await sql`select count(*)::int n from public.ai_calls`)[0].n).toBe(1);
+    expect((await sql`select count(*)::int n from public.audit_log`)[0].n).toBe(auditBefore);
+    await expect(sql`delete from public.events`).rejects.toThrow(/append-only/); // still protected outside retention
+  });
+});

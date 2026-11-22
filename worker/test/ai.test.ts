@@ -96,3 +96,18 @@ describe('AI gateway', () => {
     expect(r.model).not.toBe(first);
   });
 });
+
+describe('AI gateway robustness', () => {
+  it('treats a 200 non-JSON body as a provider error and falls back', async () => {
+    await sql`update public.ai_models set cooldown_until = null, enabled = true`;
+    let first = true;
+    const f = { fn: (async (url: string) => {
+      if (first) { first = false; return new Response('OK\n', { status: 200, headers: { 'content-type': 'text/plain' } }); }
+      return Response.json({ choices: [{ message: { content: '{"answer":"ok"}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    }) as unknown as typeof fetch };
+    const r = await new AiGateway(sql, env, f.fn).generate({ roleKey: 'research_analyst', tier: 'standard', schema, messages: msg });
+    expect(r.data.answer).toBe('ok');
+    const s = await sql`select status, error from public.ai_calls order by id desc limit 2`;
+    expect(s[1].status).toBe('error'); expect(s[1].error).toMatch(/unexpected provider response/);
+  });
+});
