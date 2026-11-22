@@ -17,7 +17,7 @@ Never use the `service_role` / secret key anywhere in this project.
 ## 2. Cloudflare (hosting the private web app) — free plan, no card
 1. Sign up at https://dash.cloudflare.com/sign-up (free).
 2. **Account ID**: shown on the Workers & Pages overview → secret `CLOUDFLARE_ACCOUNT_ID`.
-3. **My Profile → API Tokens → Create Token → template “Edit Cloudflare Workers”** → restrict to your account → create → secret `CLOUDFLARE_API_TOKEN`.
+3. **My Profile → API Tokens → Create Token → template “Edit Cloudflare Workers”** → under Permissions click **+ Add more** and add **Account · Workers AI · Read** (this lets the same token call Cloudflare's free Workers AI models — the system's primary AI provider) → restrict to your account → create → secret `CLOUDFLARE_API_TOKEN`.
 4. The first deploy creates `https://aic-command-center.<your-subdomain>.workers.dev` (Cloudflare asks you to pick the workers.dev subdomain once in the dashboard if you have never used Workers).
 
 ## 3. Backups
@@ -29,8 +29,9 @@ Secret `BACKUP_PASSPHRASE` = a long random passphrase (store it in your password
 3. **Actions → Worker → Run workflow** once to start the first discovery cycle (afterwards it runs every 2 hours).
 4. Open the workers.dev URL, sign in, then **Settings → Two-factor authentication → Enroll**, and set `security.require_mfa` to `true`.
 
-## Optional AI fallbacks (free tiers)
-GitHub Models (via the Actions token) is the default and needs no setup. To add fallbacks, create free API keys and add secrets `GEMINI_API_KEY` (Google AI Studio; free-tier prompts may be used to improve Google products), `GROQ_API_KEY`, or `OPENROUTER_API_KEY`.
+## AI providers (free tiers)
+Primary: **Cloudflare Workers AI** via the token above (free daily allocation; no extra account).
+GitHub Models via the Actions token is registered too, but on this repository's runners `models.github.ai` currently answers every request with a plain `OK` (observed 2026-11-22), so the gateway automatically cools it down and never uses that output. To add fallbacks, create free API keys and add secrets `GEMINI_API_KEY` (Google AI Studio; free-tier prompts may be used to improve Google products), `GROQ_API_KEY`, or `OPENROUTER_API_KEY`.
 
 ## Restore a backup
 Download the `db-backup` artifact from the Backup workflow run, then:
