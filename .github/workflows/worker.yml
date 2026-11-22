@@ -1,0 +1,39 @@
+name: Worker
+# Bounded, serverless-style worker: schedules due work, drains the durable Postgres queue
+# for at most WORKER_TIME_BUDGET seconds, then exits. Nothing needs to stay alive.
+on:
+  schedule:
+    - cron: '23 */2 * * *'   # every 2 hours (keeps a private repo well inside 2,000 free Actions minutes/month)
+  workflow_dispatch:
+permissions:
+  contents: read
+  models: read                # lets GITHUB_TOKEN call GitHub Models (free tier) — no extra AI account needed
+concurrency: { group: worker, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "${{ secrets.SUPABASE_DB_URL }}" ]; then echo "SUPABASE_DB_URL secret not set — skipping."; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.ok == 'true'
+        with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
+      - run: npm ci
+        if: steps.cfg.outputs.ok == 'true'
+        working-directory: worker
+      - name: Run worker
+        if: steps.cfg.outputs.ok == 'true'
+        working-directory: worker
+        run: npx tsx src/main.ts
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          WORKER_TIME_BUDGET: '480'

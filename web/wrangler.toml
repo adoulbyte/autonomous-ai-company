@@ -1,0 +1,8 @@
+# Cloudflare Workers static assets (free plan; commercial use permitted under Cloudflare's self-serve terms).
+# No server code runs here: the app is a static SPA; all data access is enforced by Supabase RLS.
+name = "aic-command-center"
+compatibility_date = "2026-11-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

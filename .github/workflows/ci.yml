@@ -1,0 +1,89 @@
+name: CI
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }
+jobs:
+  backend:
+    name: Worker + database tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
+      - run: npm ci
+        working-directory: worker
+      - run: npm run typecheck
+        working-directory: worker
+      - run: npx vitest run --reporter=verbose
+        working-directory: worker
+      - name: Dependency audit (fail on high/critical)
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: worker
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+        env: { VITE_SUPABASE_URL: 'https://example.supabase.co', VITE_SUPABASE_ANON_KEY: 'ci-placeholder' }
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: web
+
+  ui-e2e:
+    name: UI end-to-end (real local Supabase stack + browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [backend, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Start Supabase (applies supabase/migrations)
+        run: |
+          supabase init --force --with-vscode-settings=false --with-intellij-settings=false || supabase init --force
+          sed -i 's/^enable_signup = true/enable_signup = false/' supabase/config.toml || true
+          supabase start -x studio,imgproxy,inbucket,mailpit,edge-runtime,logflare,vector,supavisor,postgres-meta
+          supabase status -o env > supabase.env
+          grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY|DB_URL)=' supabase.env | sed 's/"//g' >> "$GITHUB_ENV"
+      - name: Install
+        run: |
+          (cd worker && npm ci)
+          (cd web && npm ci && npm i --no-save @playwright/test@1 && npx playwright install --with-deps chromium)
+      - name: Create owner + stranger users (Auth admin API) and register owner
+        run: |
+          for u in owner stranger; do
+            curl -fsS -X POST "$API_URL/auth/v1/admin/users" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+              -H 'content-type: application/json' -d "{\"email\":\"$u@example.test\",\"password\":\"Test-password-123!\",\"email_confirm\":true}" > /dev/null
+          done
+          cd worker && DATABASE_URL="$DB_URL" OWNER_EMAIL=owner@example.test npm run bootstrap-owner
+      - name: Build web against local Supabase
+        run: cd web && VITE_SUPABASE_URL="$API_URL" VITE_SUPABASE_ANON_KEY="$ANON_KEY" npm run build
+      - name: Browser tests
+        run: cd web && npx playwright test --trace off
+        env: { DB_URL: '${{ env.DB_URL }}' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ui-screenshots, path: web/e2e-output, retention-days: 7, if-no-files-found: ignore }

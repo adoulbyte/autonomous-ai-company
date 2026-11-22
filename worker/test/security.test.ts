@@ -126,3 +126,12 @@ describe('data integrity guards', () => {
     await expect(sql`insert into public.expenses(category, description, amount_minor, currency) values ('ai', 'x', 100, 'usd')`).rejects.toThrow(/check constraint/);
   });
 });
+
+describe('owner tools', () => {
+  it('manual opportunities keep evidence and queue analysis; non-owners refused', async () => {
+    await expect(asRole(sql, 'authenticated', STRANGER_ID, (tx) => tx`select public.owner_add_opportunity('t', 'https://x', ${'x'.repeat(30)}, null)`)).rejects.toThrow(/owner authentication/);
+    const [{ id }] = await asOwner(sql, (tx) => tx`select public.owner_add_opportunity('Referral: data cleanup', 'mailto:ref', ${'A referral asked for a CSV cleanup script, budget 300 USD.'}, 'Ref Co') as id`);
+    expect((await sql`select count(*)::int n from public.opportunity_evidence where opportunity_id = ${id}`)[0].n).toBe(1);
+    expect((await sql`select status from public.tasks where idempotency_key = ${'analyze:' + id}`)[0].status).toBe('pending');
+  });
+});
