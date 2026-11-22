@@ -15,7 +15,7 @@ async function login(page: Page, email: string, password = PASSWORD) {
 }
 /** Sign in as owner and wait until the session is established before navigating. */
 async function loginOwner(page: Page) {
-  await loginOwner(page);
+  await login(page, 'owner@example.test');
   await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible({ timeout: 20_000 });
 }
 
