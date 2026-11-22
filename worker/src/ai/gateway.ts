@@ -150,7 +150,7 @@ export class AiGateway {
           break;
         }
         const raw = await res.text();
-        let json: { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+        let json: { choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
         try { json = JSON.parse(raw); } catch { json = {}; }
         if (!Array.isArray(json.choices) || (res.status >= 300 && res.status < 400)) {
           const msg = `unexpected provider response (HTTP ${res.status}, ${res.headers.get('content-type') ?? 'no content-type'}): ${raw.slice(0, 200)}`;
@@ -159,7 +159,11 @@ export class AiGateway {
           errors.push(`${m.model}: ${msg}`); capacityFailures++;
           break;
         }
-        const content = json.choices?.[0]?.message?.content ?? '';
+        const rawContent = json.choices?.[0]?.message?.content;
+        // Some providers (e.g. Workers AI) return already-parsed JSON objects or content-part arrays.
+        const content = typeof rawContent === 'string' ? rawContent
+          : Array.isArray(rawContent) ? rawContent.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join('')
+          : rawContent == null ? '' : JSON.stringify(rawContent);
         const usage = { promptTokens: json.usage?.prompt_tokens ?? 0, completionTokens: json.usage?.completion_tokens ?? 0 };
         const parsed = extractJson(content);
         const validated = parsed.ok ? opts.schema.safeParse(parsed.value) : null;

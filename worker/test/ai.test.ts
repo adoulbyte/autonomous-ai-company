@@ -127,3 +127,12 @@ describe('provider configuration', () => {
     expect(body.model).toMatch(/^@cf\//); expect(body.response_format).toBeUndefined();
   });
 });
+
+describe('provider content shapes', () => {
+  it('accepts already-parsed JSON objects as message content', async () => {
+    await sql`update public.ai_models set cooldown_until = null, enabled = true`;
+    const f = (async () => Response.json({ choices: [{ message: { content: { answer: 'object' } } }] })) as unknown as typeof fetch;
+    const r = await new AiGateway(sql, env, f).generate({ roleKey: 'research_analyst', tier: 'standard', schema, messages: msg });
+    expect(r.data.answer).toBe('object');
+  });
+});

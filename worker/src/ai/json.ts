@@ -1,6 +1,7 @@
 /** Extract the first JSON object from a model response (tolerates code fences / prose). */
-export function extractJson(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
-  if (!text || !text.trim()) return { ok: false, error: 'empty response' };
+export function extractJson(text: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
+  if (text != null && typeof text === 'object') return { ok: true, value: text };
+  if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty response' };
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1] : text;
   try { return { ok: true, value: JSON.parse(candidate) }; } catch { /* fall through */ }

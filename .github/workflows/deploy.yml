@@ -66,8 +66,14 @@ jobs:
       - name: Guard — no service keys or DB URLs in the bundle
         if: steps.cfg.outputs.ok == 'true'
         working-directory: web
+        env: { KEY: '${{ secrets.VITE_SUPABASE_ANON_KEY }}' }
         run: |
-          if grep -rEl 'service_role|postgres(ql)?://|sb_secret_' dist; then echo "::error::secret-like content found in build"; exit 1; fi
+          # The browser key must be the public anon/publishable key, never a secret/service_role key.
+          case "$KEY" in sb_secret_*) echo "::error::VITE_SUPABASE_ANON_KEY is a SECRET key; use the anon/publishable key"; exit 1;; esac
+          if echo "$KEY" | cut -d. -f2 | base64 -d 2>/dev/null | grep -q '"service_role"'; then echo "::error::VITE_SUPABASE_ANON_KEY is the service_role key; use the anon key"; exit 1; fi
+          # No real secret values or connection strings may appear in the bundle.
+          if grep -rEl 'sb_secret_[A-Za-z0-9_-]{16,}|postgres(ql)?://[^"'"'"' ]+@' dist; then echo "::error::secret-like value found in build"; exit 1; fi
+          echo "bundle guard passed"
       - name: Deploy to Cloudflare Workers
         if: steps.cfg.outputs.ok == 'true'
         working-directory: web
