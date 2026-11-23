@@ -5,6 +5,7 @@ import { PermanentError } from '../errors.js';
 import { getSetting, logEvent } from '../db.js';
 import { untrusted } from '../sanitize.js';
 import { skillsFor } from '../skills.js';
+import { getMode, isPilot } from '../mode.js';
 import type { Tx } from '../db.js';
 
 const RespondSchema = z.object({
@@ -34,18 +35,25 @@ export const respondToLead: Handler = async (ctx) => {
   const thread = await ctx.sql`select direction, body, created_at from public.messages where conversation_id = ${inbound.conversation_id} and status in ('sent','received') order by created_at desc limit 8`;
   const pricing = await getSetting<{ min_price_minor: number; min_hourly_minor: number }>(ctx.sql, 'pricing.policy', { min_price_minor: 10000, min_hourly_minor: 3000 });
   const deals = await getSetting<{ auto_accept: boolean; max_auto_accept_minor: number }>(ctx.sql, 'deals.policy', { auto_accept: true, max_auto_accept_minor: 300000 });
-  const floor = Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
-  const quote = Number(l.value_minor ?? floor);
+  const mode = await getMode(ctx.sql);
+  const pilot = isPilot(mode);
+  const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
+  const quote = pilot ? 0 : Number(l.value_minor ?? floor);
+  const terms = pilot
+    ? `- LAUNCH PROGRAM: this work is FREE for the client (no price, no invoice). In exchange we ask only for honest feedback after delivery, and — only if they agree — permission to cite them as a reference. intent=accept when the client agrees to let us do the work. agreed_price_usd must be 0.
+- reply when accepting: confirm the scope, that we start now, that the work is free of charge, and that we will ask for their honest feedback after delivery.`
+    : `- Our quoted price: ${(quote / 100).toFixed(0)} USD. Absolute minimum we can accept: ${(floor / 100).toFixed(0)} USD. Never agree below the minimum; offer scope reduction instead.
+- reply when accepting: confirm scope, price, that we start now, that a preview will be shared and that the full deliverables are released on payment of the invoice.`;
 
   const res = await ctx.ai.generate({ roleKey: 'negotiation_agent', taskId: ctx.task.id, tier: 'strong', schema: RespondSchema, maxTokens: 1500, temperature: 0.3,
     messages: [{ role: 'user', content: `${skillsFor('negotiation')}
 
 You handle the commercial conversation for our company. Read the thread and the client's latest message, then return JSON
 {intent: accept|negotiate|question|decline|other, agreed_price_usd: number|null, scope_summary: string|null, reply: string, asked_if_ai: boolean}.
-- intent=accept ONLY if the client explicitly agrees in writing to do the work at a stated or previously quoted price.
-- Our quoted price: ${(quote / 100).toFixed(0)} USD. Absolute minimum we can accept: ${(floor / 100).toFixed(0)} USD. Never agree below the minimum; offer scope reduction instead.
+- intent=accept ONLY if the client explicitly agrees in writing.
+${terms}
 - scope_summary: when accepting or clarifying, a numbered list of exactly what will be delivered (verifiable items), derived from the request and thread.
-- reply: the email we send back (no signature, it is added automatically). If accepting: confirm scope, price, that we start now, that a preview will be shared and that the full deliverables are released on payment of the invoice.
+- reply: the email we send back (no signature, it is added automatically).
 - If the client asks whether they talk to an AI or a human, answer truthfully: our company uses AI-assisted production with quality control.
 
 Original request (untrusted):
@@ -56,7 +64,7 @@ ${untrusted('thread', thread.map((t) => `[${t.direction}] ${String(t.body).slice
 
   const d = res.data;
   let intent = d.intent;
-  const agreed = d.agreed_price_usd != null ? Math.round(d.agreed_price_usd * 100) : quote;
+  const agreed = pilot ? 0 : d.agreed_price_usd != null ? Math.round(d.agreed_price_usd * 100) : quote;
   let reply = d.reply;
   if (intent === 'accept' && agreed < floor) {
     intent = 'negotiate';

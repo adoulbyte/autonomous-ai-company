@@ -4,11 +4,15 @@ import { useData } from '../lib/hooks';
 import { dt } from '../lib/format';
 import { ActionButton, Badge, Card, ErrorBox, PageHead } from '../components/ui';
 
-type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'toggle' | 'percent';
-interface Field { path: string; label: string; type: FieldType; help?: string; placeholder?: string }
+type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'toggle' | 'percent' | 'select';
+interface Field { path: string; label: string; type: FieldType; help?: string; placeholder?: string; options?: { value: string; label: string }[] }
 interface Section { key: string; title: string; intro: string; fields: Field[] }
 
 const SECTIONS: Section[] = [
+  { key: 'business.mode', title: 'Mode commercial', intro: 'Mode lancement : les agents réalisent le travail gratuitement en échange d’un avis honnête, pour prouver la qualité et obtenir des références. Passe en mode payant quand les résultats sont concluants.', fields: [
+    { path: 'mode', label: 'Mode', type: 'select', options: [{ value: 'free_pilot', label: 'Lancement — gratuit contre un avis' }, { value: 'paid', label: 'Payant — prix du marché + facture' }] },
+    { path: 'max_active_pilots', label: 'Projets gratuits en cours au maximum', type: 'number' },
+  ] },
   { key: 'business.identity', title: 'Identité de la société', intro: 'Utilisée dans tous les e-mails, propositions et factures envoyés aux clients.', fields: [
     { path: 'company_name', label: 'Nom de la société', type: 'text' },
     { path: 'representative', label: 'Représentant', type: 'text' },
@@ -63,6 +67,10 @@ function SettingForm({ section, setting, onSaved }: { section: Section; setting:
       <div className="form-grid">
         {section.fields.map((f) => {
           const val = get(v, f.path);
+          if (f.type === 'select') return (
+            <label key={f.path} className="field">{f.label}
+              <select value={val ?? ''} onChange={(e) => setV(set(v, f.path, e.target.value))}>{f.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+            </label>);
           if (f.type === 'toggle') return (
             <label key={f.path} className="row" style={{ gridColumn: '1 / -1', fontSize: 13 }}>
               <input type="checkbox" style={{ width: 'auto' }} checked={!!val} onChange={(e) => setV(set(v, f.path, e.target.checked))} /> {f.label}

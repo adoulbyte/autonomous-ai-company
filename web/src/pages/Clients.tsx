@@ -2,6 +2,7 @@ import { q, supabase, type Row } from '../lib/supabase';
 import { useData } from '../lib/hooks';
 import { date, money } from '../lib/format';
 import { Badge, Card, Empty, ErrorBox, PageHead, Table } from '../components/ui';
+import { dt } from '../lib/format';
 
 export function Clients() {
   const { data, error } = useData(async () => {
@@ -12,6 +13,7 @@ export function Clients() {
       return { ...c, revenue: pays.reduce((s: number, p: Row) => s + Number(p.amount_minor), 0), currency: pays[0]?.currency ?? c.projects?.[0]?.currency ?? 'USD' };
     });
   });
+  const feedback = useData(() => q<Row[]>(supabase.from('client_feedback').select('*, projects(name)').order('created_at', { ascending: false })));
   return (
     <div className="stack">
       <PageHead title="Clients" subtitle="Companies that agreed to paid work (created when you create a project from a won lead)." />
@@ -23,6 +25,13 @@ export function Clients() {
         { key: 'projects', label: 'Projects', num: true, render: (r) => r.projects?.length ?? 0 },
         { key: 'revenue', label: 'Confirmed revenue', num: true, render: (r) => money(r.revenue, r.currency) },
       ]} empty={<Empty title="No clients yet">A client is created when a won lead becomes a project.</Empty>} /></Card>
+      <Card title="Avis clients"><Table rows={feedback.data} cols={[
+        { key: 'created_at', label: 'Date', render: (r) => dt(r.created_at) },
+        { key: 'project', label: 'Projet', render: (r) => r.projects?.name ?? '—' },
+        { key: 'rating', label: 'Note', render: (r) => r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating) : '—' },
+        { key: 'comment', label: 'Avis', render: (r) => r.comment ?? (r.wants_changes ? `Demande de modification : ${r.change_request}` : '—') },
+        { key: 'permission_to_publish', label: 'Publication', render: (r) => r.permission_to_publish ? <Badge value="autorisée" tone="ok" /> : <Badge value="non autorisée" /> },
+      ]} empty={<Empty title="Aucun avis pour l’instant">Les avis arrivent après les premières livraisons.</Empty>} /></Card>
     </div>
   );
 }

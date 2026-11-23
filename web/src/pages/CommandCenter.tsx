@@ -31,10 +31,12 @@ async function load() {
     q(supabase.from('ai_calls').select('status,prompt_tokens,completion_tokens').gte('at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString())),
     q(supabase.from('settings').select('value').eq('key', 'finance.base_currency')),
   ]);
+  const [mode] = await q<Row[]>(supabase.from('settings').select('value').eq('key', 'business.mode'));
+  const reviews = await q<Row[]>(supabase.from('client_feedback').select('rating').not('rating', 'is', null));
   const running = await count('tasks', (b) => b.eq('status', 'running'));
   return { fin: fin as Row[], queue: queue as Row[], oppTotal, oppEval, oppShort, leads, leadsWon, leadsClosed, clients, activeProjects, delivered,
     approvals: approvals as Row[], events: events as Row[], worker: (workers as Row[])[0], health: health as Row[], ai: aiToday as Row[], running,
-    base: ((base as Row[])[0]?.value as string) ?? 'USD' };
+    base: ((base as Row[])[0]?.value as string) ?? 'USD', pilot: (mode?.value as Row | undefined)?.mode === 'free_pilot', reviews };
 }
 
 export function CommandCenter() {
@@ -51,7 +53,8 @@ export function CommandCenter() {
 
   return (
     <div className="stack">
-      <PageHead title="Command Center" subtitle={`Live view of the business from database records · ${new Date().toLocaleString()}`} />
+      <PageHead title="Command Center" subtitle={`Live view of the business from database records · ${new Date().toLocaleString()}`}
+        actions={data.pilot ? <Badge value="Mode lancement — travail gratuit contre avis" tone="accent" /> : <Badge value="Mode payant" tone="ok" />} />
       <ErrorBox error={error} />
       <NextActions />
       <div className="grid grid-4">
@@ -61,10 +64,11 @@ export function CommandCenter() {
         <Stat label="Net profit" value={money(f.net_profit_minor, data.base)} sub="confirmed revenue − expenses" />
       </div>
       {otherCurrencies.length > 0 && <div className="small muted">Other currencies: {otherCurrencies.map((r) => `${money(r.confirmed_revenue_minor, r.currency)} confirmed`).join(' · ')}</div>}
-      <div className="grid grid-4">
+      <div className="grid grid-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
         <Stat label="Opportunities discovered" value={num(data.oppTotal)} sub={`${data.oppEval} under evaluation · ${data.oppShort} selected`} />
         <Stat label="Open leads" value={num(data.leads)} sub={`win rate ${data.leadsClosed ? pct(data.leadsWon / data.leadsClosed) : '—'} (${data.leadsWon}/${data.leadsClosed} closed)`} />
         <Stat label="Active projects" value={num(data.activeProjects)} sub={`${data.delivered} delivered · ${data.clients} clients`} />
+        <Stat label="Avis clients" value={data.reviews.length ? `${(data.reviews.reduce((a, r) => a + r.rating, 0) / data.reviews.length).toFixed(1)} / 5` : '—'} sub={`${data.reviews.length} avis reçus`} />
         <Stat label="AI usage today" value={`${num(data.ai.length)} calls`} sub={`${num(tokens)} tokens · ${data.ai.filter((r) => r.status !== 'ok').length} failed/limited`} />
       </div>
       <div className="grid grid-3">

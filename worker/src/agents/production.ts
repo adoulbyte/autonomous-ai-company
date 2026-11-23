@@ -256,7 +256,7 @@ export const prepareDelivery: Handler = async (ctx) => {
     }
     if (inv && inv.status === 'draft') await tx`update public.invoices set status = 'issued' where id = ${inv.id}`;
     if (!inv) {   // zero-price project: deliver immediately
-      await enqueue(tx, { type: 'project.deliver', key: `deliver-free:${projectId}`, role: 'project_manager', entityType: 'project', entityId: projectId,
+      await enqueue(tx, { type: 'project.deliver', key: `deliver-free:${projectId}:${sha256(dels.map((d) => d.id).join(',')).slice(0, 12)}`, role: 'project_manager', entityType: 'project', entityId: projectId,
         input: { project_id: projectId }, priority: 85, title: 'Deliver (no payment due)' });
       return { deliverables: dels.length, invoice: null };
     }
@@ -316,14 +316,17 @@ export const deliverProject: Handler = async (ctx) => {
     const ext: Record<string, string> = { markdown: 'md', code: 'txt', json: 'json', text: 'txt', html: 'html', csv: 'csv' };
     const files = dels.map((d, i) => ({ filename: `${String(i + 1).padStart(2, '0')}-${String(d.title).replace(/[^\w.-]+/g, '_').slice(0, 60)}.${ext[d.format as string] ?? 'txt'}`,
       content_b64: Buffer.from(String(d.content), 'utf8').toString('base64'), contentType: 'text/plain' }));
-    const shortBody = `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
+    const free = Number(p.budget_minor ?? 0) === 0;
+    const shortBody = free
+      ? `Hello,\n\nAs promised, please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}), free of charge. Each one passed two independent quality reviews.\n\nIf anything needs adjusting, just reply and we will fix it.\n\nWhen you have a moment, we would really value your honest feedback: a rating from 1 to 5 and a few words on what worked and what could be better. If you are happy for us to mention you as a reference, just say so — we will never publish anything without your explicit agreement.`
+      : `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, attachments, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'delivery.send', title: `Deliver (paid): ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
       reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),
       riskLevel: 'low', ifApproved: 'The delivery is sent to the client.', ifRejected: 'Delivery is held.',
-      entityType: 'project', entityId: projectId, taskId: ctx.task.id, key: `delivery:${projectId}`, payload: { message_id: msg.id },
+      entityType: 'project', entityId: projectId, taskId: ctx.task.id, key: `delivery:${projectId}:${ctx.task.id}`, payload: { message_id: msg.id },
     });
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
     for (const d of dels) await tx`update public.deliverables set status = 'delivered' where id = ${d.id}`;

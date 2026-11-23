@@ -52,7 +52,7 @@ const net = fakeFetch({ ai, json: {
 } });
 const run = (workerId: string) => runWorker({ sql, workerId, env, fetchFn: net.fn, timeBudgetMs: 120_000 });
 
-beforeAll(async () => { db = await freshDb(); sql = db.sql; await registerOwner(sql); });
+beforeAll(async () => { db = await freshDb(); sql = db.sql; await registerOwner(sql); await sql`update public.settings set value = '{"mode": "paid", "max_active_pilots": 10, "ask_review": true}' where key = 'business.mode'`; });
 afterAll(async () => { await db.drop(); });
 
 describe('end-to-end business workflow', () => {

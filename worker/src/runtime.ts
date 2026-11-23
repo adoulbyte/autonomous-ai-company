@@ -10,6 +10,7 @@ import { deliverProject, planProject, prepareDelivery, produceDeliverable, revie
 import { quoteLead } from './agents/pricing.js';
 import { followUp, pollInbox, sendOutbox } from './agents/comms.js';
 import { respondToLead } from './agents/negotiation.js';
+import { captureFeedback } from './agents/feedback.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -30,6 +31,7 @@ export const HANDLERS: Record<string, Handler> = {
   'comms.poll_inbox': pollInbox,
   'lead.followup': followUp,
   'lead.respond': respondToLead,
+  'feedback.capture': captureFeedback,
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'system.health_check': healthCheck,

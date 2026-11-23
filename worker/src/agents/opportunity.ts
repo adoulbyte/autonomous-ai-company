@@ -7,6 +7,7 @@ import { clamp01, detectInjection, normalizeForFingerprint, sha256, untrusted } 
 import { enqueue } from '../queue.js';
 import { getSetting, logEvent } from '../db.js';
 import { scoreOpportunity, type ScoringRules, type ScoringWeights } from '../scoring.js';
+import { getMode, isPilot } from '../mode.js';
 
 interface BusinessProfile { name: string; positioning: string; skills: string[]; excluded: string[]; target_hourly_rate_minor: number; currency: string; disclosure: string }
 
@@ -192,6 +193,11 @@ export const scoreOpportunityTask: Handler = async (ctx) => {
   }, weights, rules);
   const comms = await getSetting<{ require_email_contact_for_outreach: boolean }>(ctx.sql, 'comms.policy', { require_email_contact_for_outreach: false });
   const hasEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(opp.buyer_contact ?? ''));
+  const mode = await getMode(ctx.sql);
+  if (r.status === 'shortlisted' && isPilot(mode)) {
+    const [{ n }] = await ctx.sql`select count(*)::int as n from public.projects where budget_minor = 0 and status in ('planning','in_progress','in_qa','revision','ready_for_delivery')`;
+    if (n >= mode.max_active_pilots) { r.status = 'monitoring'; r.decision = 'monitor'; r.reasons.push(`Launch program at capacity (${n}/${mode.max_active_pilots} free projects in progress): kept for later`); }
+  }
   if (r.status === 'shortlisted' && comms.require_email_contact_for_outreach && !hasEmail) {
     r.status = 'monitoring'; r.decision = 'monitor';
     r.reasons.push('No direct email contact published: kept in monitoring (autonomous outreach only uses published email addresses)');
