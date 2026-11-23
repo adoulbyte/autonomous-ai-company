@@ -28,7 +28,7 @@ jobs:
       - name: Probe external endpoints (diagnostics; no secrets printed)
         env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}', GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}', GROQ_API_KEY: '${{ secrets.GROQ_API_KEY }}' }
         run: |
-          probe() { echo "== $1"; curl -sS -o /tmp/b -w 'HTTP %{http_code} %{content_type} redirect=%{redirect_url}\n' "${@:2}"; grep -oE '"id": ?"[^"]+"' /tmp/b | head -40 | tr "\n" " "; head -c 200 /tmp/b | grep -v "\"id\"" ; echo; }
+          probe() { echo "== $1"; curl -sS -o /tmp/b -w 'HTTP %{http_code} %{content_type} redirect=%{redirect_url}\n' "${@:2}"; grep -oE '"id": ?"[^"]+"' /tmp/b | head -40 | tr "\n" " "; head -c 200 /tmp/b | grep -v "\"id\"" || true; echo; }
           probe catalog https://models.github.ai/catalog/models -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28'
           probe inference https://models.github.ai/inference/chat/completions -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' -H 'Content-Type: application/json' -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Reply with the JSON {\"ok\":true}"}],"max_tokens":20}'
           probe gemini-models https://generativelanguage.googleapis.com/v1beta/openai/models -H "Authorization: Bearer $GEMINI_API_KEY"
