@@ -140,8 +140,26 @@ export const healthCheck: Handler = async (ctx) => {
       } else results.push({ component: 'ai:github_models', status: 'degraded', detail: `catalog HTTP ${res.status}` });
     } catch (e) { results.push({ component: 'ai:github_models', status: 'degraded', detail: (e as Error).message }); }
   } else results.push({ component: 'ai:github_models', status: 'down', detail: 'GITHUB_TOKEN not available to worker' });
-  const providers = await ctx.sql`select key, api_key_env from public.ai_providers where key <> 'github_models' and enabled`;
-  for (const p of providers) results.push({ component: `ai:${p.key}`, status: ctx.env[p.api_key_env as string] ? 'healthy' : 'down', detail: ctx.env[p.api_key_env as string] ? 'key configured' : 'no API key configured (optional)' });
+  // OpenAI-compatible providers: list served models, enable/disable registered ones accordingly.
+  const providers = await ctx.sql`select key, api_key_env, base_url, extra_headers from public.ai_providers where key <> 'github_models' and enabled`;
+  for (const p of providers) {
+    const key = ctx.env[p.api_key_env as string];
+    if (!key) { results.push({ component: `ai:${p.key}`, status: 'down', detail: 'no API key configured (optional)' }); continue; }
+    const base = String(p.base_url).replace(/\$\{([A-Z0-9_]+)\}/g, (_, k) => ctx.env[k] ?? '');
+    try {
+      const res = await fetchFn(`${base.replace(/\/$/, '')}/models`, { headers: { ...(p.extra_headers as Record<string, string>), authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) { results.push({ component: `ai:${p.key}`, status: res.status === 401 || res.status === 403 ? 'down' : 'degraded', detail: `models endpoint HTTP ${res.status}` }); continue; }
+      const body = (await res.json()) as { data?: { id: string }[]; result?: { name: string }[] };
+      const served = new Set([...(body.data ?? []).map((m) => m.id.replace(/^models\//, '')), ...(body.result ?? []).map((m) => m.name)]);
+      if (!served.size) { results.push({ component: `ai:${p.key}`, status: 'healthy', detail: 'key valid (catalog not listed)' }); continue; }
+      const registered = await ctx.sql`select model from public.ai_models where provider_key = ${p.key}`;
+      const missing = registered.map((r) => r.model as string).filter((m) => !served.has(m));
+      const present = registered.map((r) => r.model as string).filter((m) => served.has(m));
+      if (missing.length) await ctx.sql`update public.ai_models set enabled = false, last_error = 'not present in provider catalog' where provider_key = ${p.key} and model = any(${missing})`;
+      if (present.length) await ctx.sql`update public.ai_models set enabled = true, last_error = null where provider_key = ${p.key} and model = any(${present}) and last_error = 'not present in provider catalog'`;
+      results.push({ component: `ai:${p.key}`, status: present.length ? 'healthy' : 'down', detail: `${served.size} models served; ${present.length} registered available, ${missing.length} unavailable` });
+    } catch (e) { results.push({ component: `ai:${p.key}`, status: 'degraded', detail: (e as Error).message.slice(0, 200) }); }
+  }
   const sources = await ctx.sql`select key, health, last_error from public.sources where enabled`;
   for (const s of sources) results.push({ component: `source:${s.key}`, status: s.health === 'unknown' ? 'degraded' : s.health as 'healthy', detail: (s.last_error as string) ?? String(s.health) });
 
