@@ -1,54 +1,138 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { q, rpc, supabase, type Row } from '../lib/supabase';
 import { useData } from '../lib/hooks';
 import { dt } from '../lib/format';
 import { ActionButton, Badge, Card, ErrorBox, PageHead } from '../components/ui';
 
+type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'toggle' | 'percent';
+interface Field { path: string; label: string; type: FieldType; help?: string; placeholder?: string }
+interface Section { key: string; title: string; intro: string; fields: Field[] }
+
+const SECTIONS: Section[] = [
+  { key: 'business.identity', title: 'Identité de la société', intro: 'Utilisée dans tous les e-mails, propositions et factures envoyés aux clients.', fields: [
+    { path: 'company_name', label: 'Nom de la société', type: 'text' },
+    { path: 'representative', label: 'Représentant', type: 'text' },
+    { path: 'sender_name', label: "Nom d'expéditeur des e-mails", type: 'text' },
+    { path: 'tagline', label: 'Slogan (en-tête des e-mails et factures)', type: 'text' },
+    { path: 'website', label: 'Site web (facultatif)', type: 'text', placeholder: 'https://…' },
+    { path: 'signature', label: 'Signature des e-mails', type: 'textarea' },
+    { path: 'ai_disclosure', label: 'Mention de transparence IA (obligatoire, courte)', type: 'text' },
+  ] },
+  { key: 'finance.payment_instructions', title: 'Coordonnées de paiement (factures)', intro: 'Imprimées sur chaque facture. Tant que ce n’est pas activé, les factures restent prêtes mais ne sont pas envoyées.', fields: [
+    { path: 'enabled', label: 'Activer l’envoi des factures avec ces coordonnées', type: 'toggle' },
+    { path: 'beneficiary', label: 'Bénéficiaire', type: 'text' },
+    { path: 'iban', label: 'IBAN', type: 'text' },
+    { path: 'bic', label: 'BIC / SWIFT', type: 'text' },
+    { path: 'bank', label: 'Banque', type: 'text' },
+    { path: 'text', label: 'Instructions complémentaires', type: 'textarea' },
+    { path: 'reference_hint', label: 'Consigne de référence de paiement', type: 'text' },
+  ] },
+  { key: 'comms.policy', title: 'Prospection et e-mails', intro: 'Volume d’envoi. Gmail limite un compte standard à environ 500 destinataires par jour : au-delà, Google suspend l’envoi.', fields: [
+    { path: 'daily_send_cap', label: 'E-mails maximum par jour (tous types)', type: 'number' },
+    { path: 'max_outreach_per_day', label: 'Premiers contacts maximum par jour', type: 'number' },
+    { path: 'max_followups', label: 'Relances maximum par prospect', type: 'number' },
+    { path: 'followup_after_days', label: 'Relancer après (jours sans réponse)', type: 'number' },
+    { path: 'require_email_contact_for_outreach', label: 'Ne prospecter que les demandes avec une adresse e-mail publiée', type: 'toggle' },
+  ] },
+  { key: 'pricing.policy', title: 'Prix', intro: 'L’Analyste Prix étudie le marché pour chaque client. Ces planchers empêchent seulement de vendre à perte.', fields: [
+    { path: 'min_price_minor', label: 'Prix minimum d’un projet', type: 'money' },
+    { path: 'min_hourly_minor', label: 'Taux horaire minimum', type: 'money' },
+    { path: 'never_exceed_stated_budget', label: 'Ne jamais dépasser le budget annoncé par le client', type: 'toggle' },
+  ] },
+  { key: 'deals.policy', title: 'Conclusion des deals', intro: 'Quand l’Agent de négociation peut accepter un projet seul, après accord écrit du client.', fields: [
+    { path: 'auto_accept', label: 'Conclure automatiquement les deals acceptés par écrit', type: 'toggle' },
+    { path: 'max_auto_accept_minor', label: 'Montant maximum conclu automatiquement', type: 'money' },
+  ] },
+  { key: 'qa.policy', title: 'Qualité', intro: 'Chaque livrable doit être validé par plusieurs contrôleurs indépendants avant d’être présenté au client.', fields: [
+    { path: 'reviewers_required', label: 'Contrôles qualité indépendants requis', type: 'number' },
+    { path: 'max_qa_cycles', label: 'Corrections maximum avant escalade', type: 'number' },
+  ] },
+];
+
+const get = (o: Row, p: string) => p.split('.').reduce((a: any, k) => (a == null ? a : a[k]), o);
+const set = (o: Row, p: string, v: unknown) => { const c = structuredClone(o); const ks = p.split('.'); let t: any = c; ks.slice(0, -1).forEach((k) => (t = t[k] ??= {})); t[ks.at(-1)!] = v; return c; };
+
+function SettingForm({ section, setting, onSaved }: { section: Section; setting: Row | undefined; onSaved: () => void }) {
+  const [v, setV] = useState<Row>(setting?.value ?? {});
+  useEffect(() => setV(setting?.value ?? {}), [setting?.value]);
+  if (!setting) return null;
+  const dirty = JSON.stringify(v) !== JSON.stringify(setting.value);
+  return (
+    <Card title={section.title} actions={<span className="small muted">modifié {dt(setting.updated_at)}</span>} pad>
+      <p className="small muted" style={{ marginTop: 0 }}>{section.intro}</p>
+      <div className="form-grid">
+        {section.fields.map((f) => {
+          const val = get(v, f.path);
+          if (f.type === 'toggle') return (
+            <label key={f.path} className="row" style={{ gridColumn: '1 / -1', fontSize: 13 }}>
+              <input type="checkbox" style={{ width: 'auto' }} checked={!!val} onChange={(e) => setV(set(v, f.path, e.target.checked))} /> {f.label}
+            </label>);
+          return (
+            <label key={f.path} className="field" style={f.type === 'textarea' ? { gridColumn: '1 / -1' } : undefined}>{f.label}
+              {f.type === 'textarea'
+                ? <textarea value={val ?? ''} onChange={(e) => setV(set(v, f.path, e.target.value))} />
+                : <input type={f.type === 'text' ? 'text' : 'number'} placeholder={f.placeholder} min={0}
+                    value={val == null ? '' : f.type === 'money' ? Number(val) / 100 : val}
+                    onChange={(e) => setV(set(v, f.path, f.type === 'text' ? e.target.value : f.type === 'money' ? Math.round(Number(e.target.value) * 100) : Number(e.target.value)))} />}
+              {f.help && <span className="faint">{f.help}</span>}
+            </label>);
+        })}
+      </div>
+      <div className="row mt">
+        <ActionButton className="btn primary" disabled={!dirty} success="Enregistré" onDone={onSaved}
+          action={() => rpc('owner_set_setting', { p_key: section.key, p_value: v })}>Enregistrer</ActionButton>
+        {dirty && <button className="btn ghost" onClick={() => setV(setting.value)}>Annuler</button>}
+      </div>
+    </Card>
+  );
+}
+
 export function Settings() {
   const { data, error, reload } = useData(() => q<Row[]>(supabase.from('settings').select('*').order('key')));
-  const kill = data?.find((s) => s.key === 'system.kill_switch')?.value === true;
+  const byKey = Object.fromEntries((data ?? []).map((s) => [s.key, s]));
+  const kill = byKey['system.kill_switch']?.value === true;
+  const known = new Set([...SECTIONS.map((s) => s.key), 'system.kill_switch']);
   return (
     <div className="stack">
-      <PageHead title="Settings" subtitle="Business rules, limits and security. Every change is versioned in the audit log. Critical rules proposed by agents require your approval." />
+      <PageHead title="Paramètres" subtitle="Tout se règle ici avec des formulaires simples. Chaque modification est enregistrée dans l’historique." />
       <ErrorBox error={error} />
-      <Card title="Emergency kill switch" pad>
-        <div className="spread"><div>{kill ? <Badge value="ON — all work stopped" tone="bad" /> : <Badge value="off — system operating" tone="ok" />}
-          <p className="small muted">When on, workers claim no tasks and nothing is processed. Takes effect at the next claim (within one worker cycle).</p></div>
-          <ActionButton className={`btn ${kill ? 'primary' : 'danger solid'}`} confirm={kill ? 'Resume operations?' : 'Stop all autonomous work now?'} onDone={reload}
-            action={() => rpc('owner_set_setting', { p_key: 'system.kill_switch', p_value: !kill })}>{kill ? 'Resume operations' : 'Activate kill switch'}</ActionButton></div>
+      <Card title="Arrêt d’urgence" pad>
+        <div className="spread"><div>{kill ? <Badge value="ACTIVÉ — tout est à l’arrêt" tone="bad" /> : <Badge value="désactivé — la société fonctionne" tone="ok" />}
+          <p className="small muted">Activé, les agents ne prennent plus aucune tâche et n’envoient plus rien, dès le cycle suivant.</p></div>
+          <ActionButton className={`btn ${kill ? 'primary' : 'danger solid'}`} confirm={kill ? 'Relancer la société ?' : 'Arrêter immédiatement tout le travail autonome ?'} onDone={reload}
+            action={() => rpc('owner_set_setting', { p_key: 'system.kill_switch', p_value: !kill })}>{kill ? 'Relancer' : 'Tout arrêter'}</ActionButton></div>
       </Card>
-      <MfaCard />
-      {data?.filter((s) => s.key !== 'system.kill_switch').map((s) => <SettingEditor key={s.key} s={s} onSaved={reload} />)}
+      {SECTIONS.map((s) => <SettingForm key={s.key} section={s} setting={byKey[s.key]} onSaved={reload} />)}
+      <MfaCard requireMfa={byKey['security.require_mfa']?.value === true} onChanged={reload} />
+      <details className="card card-pad"><summary className="small muted">Paramètres techniques (mode expert)</summary>
+        <div className="stack mt">{(data ?? []).filter((s) => !known.has(s.key) && s.key !== 'security.require_mfa').map((s) => <ExpertSetting key={s.key} s={s} onSaved={reload} />)}</div>
+      </details>
     </div>
   );
 }
 
-function SettingEditor({ s, onSaved }: { s: Row; onSaved: () => void }) {
+function ExpertSetting({ s, onSaved }: { s: Row; onSaved: () => void }) {
   const [text, setText] = useState(JSON.stringify(s.value, null, 2));
-  const dirty = text !== JSON.stringify(s.value, null, 2);
-  return <Card title={<span className="row"><code>{s.key}</code>{s.critical && <Badge value="critical rule" tone="warn" />}</span>} actions={<span className="small muted">v{s.version} · {dt(s.updated_at)}</span>} pad>
-    <p className="small muted" style={{ marginTop: 0 }}>{s.description}</p>
-    <textarea className="mono" style={{ minHeight: Math.min(320, 40 + text.split('\n').length * 18) }} value={text} onChange={(e) => setText(e.target.value)} />
-    <div className="row mt"><ActionButton className="btn sm primary" disabled={!dirty} success="Saved (audited)" onDone={onSaved}
-      confirm={s.critical ? 'This is a critical business rule. Save the change?' : undefined}
-      action={async () => { let v: unknown; try { v = JSON.parse(text); } catch { throw new Error('Invalid JSON'); } await rpc('owner_set_setting', { p_key: s.key, p_value: v }); }}>Save</ActionButton>
-      {dirty && <button className="btn sm ghost" onClick={() => setText(JSON.stringify(s.value, null, 2))}>Reset</button>}</div>
-  </Card>;
+  return <div><div className="small" style={{ fontWeight: 600 }}>{s.description ?? s.key}</div>
+    <textarea className="mono" value={text} onChange={(e) => setText(e.target.value)} />
+    <ActionButton className="btn sm" success="Enregistré" onDone={onSaved} disabled={text === JSON.stringify(s.value, null, 2)}
+      action={async () => { let v: unknown; try { v = JSON.parse(text); } catch { throw new Error('Format invalide'); } await rpc('owner_set_setting', { p_key: s.key, p_value: v }); }}>Enregistrer</ActionButton></div>;
 }
 
-function MfaCard() {
+function MfaCard({ requireMfa, onChanged }: { requireMfa: boolean; onChanged: () => void }) {
   const { data, reload } = useData(async () => (await supabase.auth.mfa.listFactors()).data);
   const [enroll, setEnroll] = useState<{ id: string; qr: string; secret: string } | null>(null); const [code, setCode] = useState('');
   const verified = data?.totp?.filter((f) => f.status === 'verified') ?? [];
-  return <Card title="Two-factor authentication (TOTP)" pad><div className="stack">
-    <div>{verified.length ? <Badge value="enrolled" tone="ok" /> : <Badge value="not enrolled" tone="warn" />}
-      <span className="small muted"> After enrolling, set <code>security.require_mfa</code> to <code>true</code> below so the database refuses owner access without a second factor.</span></div>
+  return <Card title="Sécurité du compte (double authentification)" pad><div className="stack">
+    <div>{verified.length ? <Badge value="application d’authentification activée" tone="ok" /> : <Badge value="non activée" tone="warn" />}</div>
     {!verified.length && !enroll && <ActionButton className="btn" action={async () => {
       const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' }); if (error) throw error;
-      setEnroll({ id: data.id, qr: data.totp.qr_code, secret: data.totp.secret }); }}>Enroll authenticator</ActionButton>}
-    {enroll && <><img src={enroll.qr} alt="TOTP QR code" width={180} height={180} style={{ background: '#fff', borderRadius: 8 }} /><code className="small">{enroll.secret}</code>
-      <input placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 200 }} />
-      <ActionButton className="btn primary" success="MFA enrolled" onDone={() => { setEnroll(null); reload(); }} action={async () => {
-        const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: enroll.id, code }); if (error) throw error; }}>Verify & enable</ActionButton></>}
+      setEnroll({ id: data.id, qr: data.totp.qr_code, secret: data.totp.secret }); }}>Activer avec une application (Google Authenticator…)</ActionButton>}
+    {enroll && <><img src={enroll.qr} alt="QR code" width={180} height={180} style={{ background: '#fff', borderRadius: 8 }} />
+      <input placeholder="Code à 6 chiffres" value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 200 }} />
+      <ActionButton className="btn primary" success="Double authentification activée" onDone={() => { setEnroll(null); reload(); }} action={async () => {
+        const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: enroll.id, code }); if (error) throw error; }}>Vérifier</ActionButton></>}
+    {verified.length > 0 && <label className="row small"><input type="checkbox" style={{ width: 'auto' }} checked={requireMfa}
+      onChange={async (e) => { await rpc('owner_set_setting', { p_key: 'security.require_mfa', p_value: e.target.checked }); onChanged(); }} /> Exiger la double authentification pour accéder au centre de commande</label>}
   </div></Card>;
 }

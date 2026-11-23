@@ -50,7 +50,7 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   const expired = Number((await sql`select public.expire_approvals() as n`)[0].n);
   const executed = Number((await sql`select public.execute_approved_actions() as n`)[0].n);
   let sources = 0;
-  const due = await sql`select key, name, interval_minutes from public.sources where enabled and kind = 'api' and next_run_at <= ${now}`;
+  const due = await sql`select key, name, interval_minutes from public.sources where enabled and kind in ('api','rss') and next_run_at <= ${now}`;
   for (const s of due) {
     const slot = Math.floor(now.getTime() / (Number(s.interval_minutes) * 60_000));
     await enqueue(sql, { type: 'discovery.run_source', key: `discovery:${s.key}:${slot}`, role: 'opportunity_scout', entityType: 'source',

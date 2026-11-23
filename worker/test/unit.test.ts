@@ -140,3 +140,27 @@ describe('market pricing', () => {
     expect(decidePrice({ statedBudgetMinor: null, aiTypicalMinor: 5000, comparablesMedianMinor: null, estHours: 20, policy }).priceMinor).toBe(60000);
   });
 });
+import { parseRss, remotive, hnHiring } from '../src/connectors/jobs.js';
+describe('job connectors', () => {
+  it('parses RSS items', () => {
+    const items = parseRss('<rss><channel><item><title><![CDATA[Acme: Contract Python Dev]]></title><link>https://weworkremotely.com/x</link><description>&lt;p&gt;Contract role, email jobs@acme.io&lt;/p&gt;</description><pubDate>Mon, 23 Nov 2026 10:00:00 GMT</pubDate></item></channel></rss>');
+    expect(items[0]).toMatchObject({ title: 'Acme: Contract Python Dev', link: 'https://weworkremotely.com/x' });
+  });
+  it('keeps only contract/freelance jobs and extracts published emails', async () => {
+    const fetchFn = (async () => Response.json({ jobs: [
+      { id: 1, url: 'https://remotive.com/j/1', title: 'Data engineer', company_name: 'DataCo', category: 'data', job_type: 'contract', publication_date: new Date().toISOString(), candidate_required_location: 'Worldwide', salary: '', description: '<p>Send your offer to hire@dataco.io</p>' },
+      { id: 2, url: 'https://remotive.com/j/2', title: 'Staff SWE', company_name: 'Big', category: 'software-dev', job_type: 'full_time', publication_date: new Date().toISOString(), candidate_required_location: 'US', salary: '', description: 'x' },
+    ] })) as unknown as typeof fetch;
+    const r = await remotive({ config: { categories: ['data'] }, maxItems: 10, env: {}, fetchFn });
+    expect(r).toHaveLength(1); expect(r[0].buyerContact).toBe('hire@dataco.io');
+  });
+  it('filters HN who-is-hiring posts to contract work', async () => {
+    const fetchFn = (async (u: string) => u.includes('search_by_date')
+      ? Response.json({ hits: [{ objectID: '1', title: 'Ask HN: Who is hiring? (November 2026)', created_at: new Date().toISOString() }] })
+      : Response.json({ id: 1, children: [
+          { id: 2, author: 'a', created_at: new Date().toISOString(), children: [], text: 'Acme | Contract Python developer | Remote<p>Email cto@acme.dev' },
+          { id: 3, author: 'b', created_at: new Date().toISOString(), children: [], text: 'BigCo | Full-time SWE | NYC' }] })) as unknown as typeof fetch;
+    const r = await hnHiring({ config: {}, maxItems: 10, env: {}, fetchFn });
+    expect(r.map((x) => x.buyerContact)).toEqual(['cto@acme.dev']);
+  });
+});

@@ -17,6 +17,7 @@ const ai: Responder = (prompt) => {
     difficulty: 0.3, competition: 0.4, risk: 0.15, risk_flags: [], p_win: 0.45, p_paid: 0.9, evidence_quality: 0.85, strategic_value: 0.6,
     confidence: 0.7, unknowns: ['data volume'], rationale: 'Explicit budget ($800) and clear scope: CSV validation + Markdown report.' } };
   if (prompt.includes('You are a pricing analyst')) return { body: { low_usd: 600, typical_usd: 900, high_usd: 1400, typical_hourly_rate_usd: 75, rationale: 'Small Python automation with validation and reporting; typical remote rates 50-100 USD/h for ~10h.' } };
+  if (prompt.includes('Review this outreach email')) return { body: { score: 9, issues: [], verdict: 'send' } };
   if (prompt.includes('Write a first reply')) return { body: {
     subject: 'Re: Python CSV automation for Acme Logistics',
     body: `Hello Acme team,\n\nYou mentioned needing a Python automation that validates daily shipment CSV exports and produces a Markdown summary plus a cleaned CSV. We can build this as a small, documented script with tests. A good first step would be a sample export (anonymised is fine) so we can confirm the validation rules.\n\nCould you share how many rows a typical file has, and which fields must never be empty?\n\n${DISCLOSURE}`,
@@ -46,7 +47,7 @@ const ai: Responder = (prompt) => {
 const net = fakeFetch({ ai, json: {
   'https://hn.algolia.com/api/v1/search_by_date': HN_SEARCH,
   'https://hn.algolia.com/api/v1/items/90000001': HN_ITEM,
-  'https://api.github.com/search/issues': { items: [] },
+  'https://api.github.com/search/issues': { items: [] }, 'https://remotive.com/api/remote-jobs': { jobs: [] }, 'https://weworkremotely.com/': '<rss><channel></channel></rss>',
   'https://models.github.ai/catalog/models': [{ id: 'openai/gpt-4.1' }, { id: 'openai/gpt-4.1-mini' }, { id: 'openai/gpt-4.1-nano' }, { id: 'openai/gpt-4o-mini' }, { id: 'meta/Llama-3.3-70B-Instruct' }],
 } });
 const run = (workerId: string) => runWorker({ sql, workerId, env, fetchFn: net.fn, timeBudgetMs: 120_000 });

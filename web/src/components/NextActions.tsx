@@ -21,8 +21,8 @@ export function NextActions() {
     const noInvoice = deliveredNoInvoice.filter((p) => !(p.invoices as Row[]).some((i) => i.status !== 'void'));
     const payMissing = !(paySetting?.value as Row | undefined)?.enabled;
     const actions: Action[] = [
-      { key: 'paydetails', icon: '🏦', title: 'Coordonnées de paiement à renseigner', count: payMissing && (readyProjects.length + openInvoices.length) > 0 ? 1 : 0, to: '/settings', cta: 'Ouvrir Settings',
-        detail: 'Des factures sont prêtes mais ne peuvent pas partir sans tes coordonnées de paiement. Settings → finance.payment_instructions : renseigne l\'IBAN puis mets "enabled": true.' },
+      { key: 'paydetails', icon: '🏦', title: 'Coordonnées de paiement à renseigner', count: payMissing && (readyProjects.length + openInvoices.length) > 0 ? 1 : 0, to: '/settings', cta: 'Ouvrir les paramètres',
+        detail: 'Des factures sont prêtes mais ne peuvent pas partir sans tes coordonnées de paiement. Paramètres → « Coordonnées de paiement » : renseigne l\'IBAN puis coche « Activer ».' },
       { key: 'approvals', icon: '✅', title: 'Décisions à prendre', count: approvals.length, to: '/approvals', cta: 'Voir les approbations',
         detail: approvals.length ? `Ex. : « ${approvals[0].title} ». Les agents attendent ton accord avant d'agir.` : '' },
       { key: 'messages', icon: '✉️', title: 'Messages approuvés à envoyer', count: approvedMsgs.length, to: '/communications', cta: 'Ouvrir Communications',

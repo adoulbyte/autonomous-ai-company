@@ -28,6 +28,7 @@ const ai: Responder = (prompt) => {
     stated_budget_usd: 800, est_revenue_usd: 800, est_hours: 10, skills_required: ['python'], skill_fit: 0.9, difficulty: 0.3, competition: 0.4, risk: 0.15, risk_flags: [],
     p_win: 0.45, p_paid: 0.9, evidence_quality: 0.85, strategic_value: 0.6, confidence: 0.7, unknowns: [], rationale: 'Clear scope and budget.' } };
   if (prompt.includes('You are a pricing analyst')) return { body: { low_usd: 600, typical_usd: 900, high_usd: 1400, typical_hourly_rate_usd: 75, rationale: 'market' } };
+  if (prompt.includes('Review this outreach email')) return { body: { score: 9, issues: [], verdict: 'send' } };
   if (prompt.includes('Write a first reply')) return { body: { subject: 'Python CSV automation for Acme Logistics',
     body: 'Hello Acme team,\n\nYou need a Python automation that validates your daily shipment CSV exports and produces a Markdown summary and a cleaned CSV. We can deliver it as a tested script with usage docs for 800 USD, within your budget. We share a preview first; files are released on payment.\n\nShall we start?',
     claims_made: [], questions_for_buyer: [] } };
@@ -47,7 +48,7 @@ const ai: Responder = (prompt) => {
   return { status: 500, body: { error: 'unexpected prompt' } };
 };
 const net = fakeFetch({ ai, json: { 'https://hn.algolia.com/api/v1/search_by_date': HN_SEARCH, 'https://hn.algolia.com/api/v1/items/90000001': HN_ITEM,
-  'https://api.github.com/search/issues': { items: [] }, 'https://models.github.ai/catalog/models': [{ id: 'openai/gpt-4.1' }, { id: 'openai/gpt-4.1-mini' }] } });
+  'https://api.github.com/search/issues': { items: [] }, 'https://remotive.com/api/remote-jobs': { jobs: [] }, 'https://weworkremotely.com/': '<rss><channel></channel></rss>', 'https://models.github.ai/catalog/models': [{ id: 'openai/gpt-4.1' }, { id: 'openai/gpt-4.1-mini' }] } });
 const run = (w: string) => runWorker({ sql, workerId: w, env, fetchFn: net.fn, mail, timeBudgetMs: 120_000 });
 
 beforeAll(async () => {
@@ -61,8 +62,9 @@ describe('fully autonomous deal cycle (owner only validates the payment)', () =>
     await run('a-1');
     const first = outbox.find((m) => m.subject.includes('Python CSV automation'));
     expect(first?.to).toBe('ops@acme-logistics.example');
-    expect(first?.html).toContain('Autonomous AI Studio');
-    expect(first?.text).toContain('Prepared with AI assistance.');
+    expect(first?.html).toContain('[company]');
+    expect(first?.text).toContain('[representative]');
+    expect(first?.text).toContain('AI-assisted production');
     clientWrites('Agreed for 800 USD, please go ahead.');
     await run('a-2');
     await run('a-3');

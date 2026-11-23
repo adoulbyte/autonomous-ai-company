@@ -68,13 +68,13 @@ test('kill switch toggles from Settings and is visible everywhere', async ({ pag
   page.on('dialog', (d) => d.accept());
   await loginOwner(page);
   await page.goto('/settings');
-  await page.getByRole('button', { name: 'Activate kill switch' }).click();
+  await page.getByRole('button', { name: 'Tout arrêter' }).click();
   await expect.poll(() => sql(`select value::text from public.settings where key = 'system.kill_switch'`)).toBe('true');
   await page.goto('/');
   await expect(page.getByText('Kill switch is ON')).toBeVisible();
   await shot(page, '05-kill-switch-on');
   await page.goto('/settings');
-  await page.getByRole('button', { name: 'Resume operations' }).click();
+  await page.getByRole('button', { name: 'Relancer' }).click();
   await expect.poll(() => sql(`select value::text from public.settings where key = 'system.kill_switch'`)).toBe('false');
 });
 
