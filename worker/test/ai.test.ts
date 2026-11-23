@@ -136,3 +136,23 @@ describe('provider content shapes', () => {
     expect(r.data.answer).toBe('object');
   });
 });
+
+describe('rate-limit resilience', () => {
+  it('waits for a short per-minute cooldown instead of deferring the task', async () => {
+    await sql`update public.ai_models set cooldown_until = null, enabled = true, consecutive_failures = 0`;
+    await sql`delete from public.ai_calls`;
+    let limited = true;
+    const f = (async () => limited ? new Response('{"error":"rate"}', { status: 429, headers: { 'retry-after': '1' } })
+      : Response.json({ choices: [{ message: { content: '{"answer":"after wait"}' } }] })) as unknown as typeof fetch;
+    const ai = new AiGateway(sql, env, f);
+    ai.sleep = async () => { limited = false; await sql`update public.ai_models set cooldown_until = null`; };
+    const r = await ai.generate({ roleKey: 'research_analyst', tier: 'standard', schema, messages: msg });
+    expect(r.data.answer).toBe('after wait');
+  });
+  it('still defers when nothing comes back within the wait budget', async () => {
+    await sql`update public.ai_models set cooldown_until = null, enabled = true`;
+    const f = (async () => new Response('{"error":"rate"}', { status: 429, headers: { 'retry-after': '3600' } })) as unknown as typeof fetch;
+    const ai = new AiGateway(sql, env, f);
+    await expect(ai.generate({ roleKey: 'research_analyst', tier: 'standard', schema, messages: msg })).rejects.toBeInstanceOf(DeferError);
+  });
+});

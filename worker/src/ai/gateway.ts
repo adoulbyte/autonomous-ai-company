@@ -91,7 +91,27 @@ export class AiGateway {
       where provider_key = ${m.provider_key} and model = ${m.model}`;
   }
 
+  /** Max wall time we are willing to wait for a rate-limited model to become available again (free tiers reset per minute). */
+  maxWaitMs = 110_000;
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+
   async generate<T>(opts: GenerateOptions<T>): Promise<GenerateResult<T>> {
+    const deadline = Date.now() + this.maxWaitMs;
+    for (;;) {
+      try { return await this.attempt(opts); }
+      catch (e) {
+        if (!(e instanceof DeferError)) throw e;
+        // All candidates unavailable: if one comes back soon (per-minute rate limits), wait for it instead of deferring 15 min.
+        const [next] = await this.sql<{ at: Date | null }[]>`select min(m.cooldown_until) as at from public.ai_models m join public.ai_providers p on p.key = m.provider_key
+            where m.enabled and p.enabled and m.cooldown_until > now()`;
+        const waitMs = next?.at ? new Date(next.at).getTime() - Date.now() + 1000 : Infinity;
+        if (!Number.isFinite(waitMs) || Date.now() + waitMs > deadline || /daily/.test(e.message)) throw e;
+        await this.sleep(Math.max(1000, waitMs));
+      }
+    }
+  }
+
+  private async attempt<T>(opts: GenerateOptions<T>): Promise<GenerateResult<T>> {
     await this.checkBudgets(opts.roleKey);
     let models = await this.candidates(opts.tier, opts.allowDowngrade);
     if (opts.avoidModel) {
@@ -104,7 +124,7 @@ export class AiGateway {
     let capacityFailures = 0;
     const errors: string[] = [];
 
-    for (const m of models.slice(0, 4)) {
+    for (const m of models.slice(0, 10)) {
       let attemptMessages = messages;
       for (let repair = 0; repair < 2; repair++) {
         const started = Date.now();
@@ -182,7 +202,7 @@ export class AiGateway {
           { role: 'user', content: `Your previous answer did not match the required JSON schema: ${problem}. Reply again with ONLY the corrected JSON object.` }];
       }
     }
-    if (capacityFailures >= Math.min(models.length, 4)) {
+    if (capacityFailures >= Math.min(models.length, 10)) {
       throw new DeferError(`all candidate models unavailable: ${errors.join(' | ').slice(0, 800)}`, 900);
     }
     throw new RetryableError(`AI generation failed validation on all models: ${errors.join(' | ').slice(0, 800)}`);
