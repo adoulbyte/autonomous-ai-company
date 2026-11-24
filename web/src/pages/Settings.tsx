@@ -38,6 +38,11 @@ const SECTIONS: Section[] = [
     { path: 'followup_after_days', label: 'Relancer après (jours sans réponse)', type: 'number' },
     { path: 'require_email_contact_for_outreach', label: 'Ne prospecter que les demandes avec une adresse e-mail publiée', type: 'toggle' },
   ] },
+  { key: 'prospecting.policy', title: 'Prospection des entreprises', intro: 'Les agents contactent en continu des entreprises locales qui publient une adresse e-mail professionnelle (sites vitrines, visuels, scénarios publicitaires, documents PDF/Excel). Le volume augmente chaque jour pour protéger la réputation de la boîte Gmail.', fields: [
+    { path: 'start_per_day', label: 'Nouveaux contacts par jour au démarrage', type: 'number' },
+    { path: 'step_per_day', label: 'Augmentation chaque jour', type: 'number' },
+    { path: 'max_per_day', label: 'Nouveaux contacts par jour au maximum', type: 'number' },
+  ] },
   { key: 'pricing.policy', title: 'Prix', intro: 'L’Analyste Prix étudie le marché pour chaque client. Ces planchers empêchent seulement de vendre à perte.', fields: [
     { path: 'min_price_minor', label: 'Prix minimum d’un projet', type: 'money' },
     { path: 'min_hourly_minor', label: 'Taux horaire minimum', type: 'money' },

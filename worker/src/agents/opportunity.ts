@@ -6,7 +6,8 @@ import { enrichContacts } from '../connectors/enrich.js';
 import { PermanentError, RetryableError } from '../errors.js';
 import { clamp01, detectInjection, normalizeForFingerprint, sha256, untrusted } from '../sanitize.js';
 import { enqueue } from '../queue.js';
-import { getSetting, logEvent } from '../db.js';
+import { getSetting, logEvent, type Sql, type Tx } from '../db.js';
+import type { RawOpportunity } from '../connectors/types.js';
 import { scoreOpportunity, type ScoringRules, type ScoringWeights } from '../scoring.js';
 import { getMode, isPilot } from '../mode.js';
 
@@ -26,6 +27,67 @@ export function skillOverlap(text: string, skills: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Directory prospecting (B2B): businesses that publish a professional email address
+// ---------------------------------------------------------------------------
+export interface ProspectingPolicy { start_per_day: number; step_per_day: number; max_per_day: number; started_at: string }
+
+/** Daily first-contact allowance with a progressive warm-up (protects the mailbox's sending reputation). */
+export function dailyProspectCap(p: ProspectingPolicy, now = new Date()): number {
+  const days = Math.max(0, Math.floor((now.getTime() - new Date(p.started_at).getTime()) / 86_400_000));
+  return Math.min(p.max_per_day, p.start_per_day + days * p.step_per_day);
+}
+
+async function advanceCursor(sql: Sql | Tx, key: string) {
+  await sql`update public.sources set config = jsonb_set(config, '{cursor}', to_jsonb(coalesce((config->>'cursor')::int, 0) + 1)) where key = ${key}`;
+}
+
+const NEED_LABEL: Record<string, string> = {
+  website: 'No website listed: a simple, professional showcase website (one page or a few pages, mobile friendly) is the obvious quick win.',
+  marketing: 'Already has a website: offer quick wins such as ad scripts/scenarios for social media, flyers or menus as PDF, price lists or planning in Excel, simple visuals.',
+};
+
+const prospectFromDirectory = async (ctx: Parameters<Handler>[0], key: string, sourceName: string, items: RawOpportunity[]) => {
+  const policy = await getSetting<ProspectingPolicy>(ctx.sql, 'prospecting.policy', { start_per_day: 20, step_per_day: 10, max_per_day: 120, started_at: new Date().toISOString() });
+  return finish(ctx, async (tx) => {
+    const [{ n: today }] = await tx`select count(*)::int as n from public.leads l join public.sources s on s.key = l.source
+        where s.kind = 'directory' and l.created_at >= date_trunc('day', now())`;
+    let room = Math.max(0, dailyProspectCap(policy) - Number(today));
+    let created = 0, duplicates = 0, pursued = 0, kept = 0;
+    // Prospects kept from previous days go first.
+    const backlog = await tx`select o.id from public.opportunities o join public.sources s on s.key = o.source_key
+        where s.kind = 'directory' and o.status = 'monitoring' and o.decision = 'investigate' order by o.discovered_at limit ${room}`;
+    for (const b of backlog) { await tx`select public.pursue_opportunity(${b.id}::uuid)`; pursued++; room--; }
+    for (const it of items) {
+      const email = String(it.buyerContact ?? '').toLowerCase();
+      const dup = await tx`select 1 from public.opportunities where (source_key = ${key} and external_id = ${it.externalId}) or lower(buyer_contact) = ${email}
+          union all select 1 from public.contacts where lower(email) = ${email} limit 1`;
+      if (dup.length) { duplicates++; continue; }
+      const [ev] = await tx`insert into public.evidence(source_key, url, content_hash, title, excerpt, raw)
+          values (${key}, ${it.url}, ${sha256(it.text)}, ${it.title}, ${it.text}, ${tx.json(it.raw as never)})
+          on conflict (url, content_hash) do update set fetched_at = now() returning id`;
+      const need = String(it.raw.need ?? 'website');
+      const analysis = { prospect: true, need, language: it.raw.language ?? 'fr', category: it.raw.category, city: it.raw.city, website: it.raw.website ?? null,
+        rationale: `${it.buyerName} (${it.raw.category}, ${it.raw.city}) publishes a professional email address. ${NEED_LABEL[need] ?? ''}` };
+      const [opp] = await tx`insert into public.opportunities(source_key, external_id, fingerprint, title, description, url, buyer_name, buyer_contact,
+            posted_at, last_verified_at, business_model, revenue_mechanism, skill_fit, risk, evidence_quality, analysis)
+          values (${key}, ${it.externalId}, ${sha256(it.externalId)}, ${it.title}, ${it.text}, ${it.url}, ${it.buyerName ?? null}, ${email}, now(), now(),
+            'ai_services', 'Proactive B2B proposal (launch program: free work for a review)', 0.85, 0.1, 0.7, ${tx.json(analysis as never)}) returning id`;
+      await tx`insert into public.opportunity_evidence(opportunity_id, evidence_id) values (${opp.id}, ${ev.id})`;
+      created++;
+      await tx`update public.opportunities set status = 'monitoring', decision = 'investigate',
+          decision_reasons = ${[`Prospect from ${sourceName}: ${NEED_LABEL[need] ?? need}`]} where id = ${opp.id}`;
+      if (room > 0) { await tx`select public.pursue_opportunity(${opp.id}::uuid)`; pursued++; room--; } else kept++;
+    }
+    await advanceCursor(tx, key);
+    await tx`update public.sources set last_run_at = now(), health = 'healthy', consecutive_failures = 0, last_error = null,
+        items_found_total = items_found_total + ${created} where key = ${key}`;
+    await logEvent(tx, 'source', key, 'discovery_completed', `${sourceName}: ${items.length} businesses, ${created} new, ${pursued} contacted today, ${kept} kept for the next days`,
+      { found: items.length, created, duplicates, pursued, kept });
+    return { found: items.length, created, duplicates, pursued, kept, city: items[0]?.raw.city ?? null };
+  });
+};
+
+// ---------------------------------------------------------------------------
 // discovery.run_source — Opportunity Scout (deterministic connector)
 // ---------------------------------------------------------------------------
 export const runSource: Handler = async (ctx) => {
@@ -40,10 +102,12 @@ export const runSource: Handler = async (ctx) => {
   try {
     items = await connector({ config: source.config as Record<string, unknown>, maxItems: source.max_items_per_run as number, env: ctx.env, fetchFn: ctx.fetchFn });
   } catch (e) {
+    if (source.kind === 'directory') await advanceCursor(ctx.sql, key);   // never stay stuck on one area
     await ctx.sql`update public.sources set health = case when consecutive_failures >= 2 then 'down' else 'degraded' end,
       consecutive_failures = consecutive_failures + 1, last_error = ${(e as Error).message.slice(0, 500)}, last_run_at = now() where key = ${key}`;
     throw e;
   }
+  if (source.kind === 'directory') return prospectFromDirectory(ctx, key, String(source.name), items);
   const profile = await getSetting<BusinessProfile>(ctx.sql, 'business.profile', { skills: [] } as unknown as BusinessProfile);
   const requireEmail = (await getSetting<{ require_email_contact_for_outreach?: boolean }>(ctx.sql, 'comms.policy', {})).require_email_contact_for_outreach === true;
   // Postings without a printed email: look up the company's own published business contact (bounded in time).

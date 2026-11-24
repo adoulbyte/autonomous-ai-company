@@ -20,6 +20,8 @@ export async function freshDb(): Promise<{ sql: Sql; url: string; drop: () => Pr
   for (const f of readdirSync(join(ROOT, 'supabase/migrations')).sort()) {
     await sql.unsafe(readFileSync(join(ROOT, 'supabase/migrations', f), 'utf8'));
   }
+  // The B2B directory source is opted into by the tests that exercise it.
+  await sql`update public.sources set enabled = false where kind = 'directory'`;
   return {
     sql, url,
     drop: async () => {
