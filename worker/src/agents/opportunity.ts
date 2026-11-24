@@ -77,6 +77,10 @@ const prospectFromDirectory = async (ctx: Parameters<Handler>[0], key: string, s
     noMx = ok.filter((x) => !x).length;
     items = items.filter((_, k) => ok[k]);
   }
+  // The marketing strategist's focus: trades that respond best are contacted first, the least responsive last.
+  const strategy = await getSetting<{ focus_categories?: string[]; deprioritize_categories?: string[] }>(ctx.sql, 'marketing.strategy', {});
+  const prio = (it: RawOpportunity) => (strategy.focus_categories ?? []).includes(String(it.raw.category)) ? 1 : (strategy.deprioritize_categories ?? []).includes(String(it.raw.category)) ? -1 : 0;
+  items = [...items].sort((x, y) => prio(y) - prio(x));
   return finish(ctx, async (tx) => {
     const [{ n: today }] = await tx`select count(*)::int as n from public.leads l join public.sources s on s.key = l.source
         where s.kind = 'directory' and l.created_at >= date_trunc('day', now())`;

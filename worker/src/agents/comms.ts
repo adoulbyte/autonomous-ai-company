@@ -2,6 +2,8 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { getSetting, logEvent, type Sql } from '../db.js';
 import { enqueue } from '../queue.js';
+import { prospectCta } from '../email/cta.js';
+import { getCatalog } from './pricing.js';
 import { LOGO_CID, logoAttachment, renderHtml, renderText, type Identity } from '../email/template.js';
 import { scrubSecrets } from '../sanitize.js';
 
@@ -58,7 +60,9 @@ export const sendOutbox: Handler = async (ctx) => {
       const prospecting = /^(outreach|followup):/.test(String(m.idempotency_key ?? ''));
       if (prospecting && sentOutreach > 0 && pacing) await new Promise((r) => setTimeout(r, 6000 + Math.random() * 9000));   // human-like pace
       if (prospecting && sentOutreach >= 12) continue;   // at most 12 prospecting emails per run; the rest go next cycle
-      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), personal: prospecting });
+      const cls = (m.classification ?? {}) as { cta?: { lang: string } };
+      const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql)) : undefined;
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), personal: prospecting, cta });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
         text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments,

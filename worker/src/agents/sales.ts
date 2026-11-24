@@ -7,6 +7,7 @@ import { getSetting, logEvent } from '../db.js';
 import { skillsFor } from '../skills.js';
 import { getMode, isPilot } from '../mode.js';
 import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
+import { isInterestedReply } from '../email/cta.js';
 
 const EmailReviewSchema = z.object({ score: z.number().min(0).max(10), issues: z.array(z.string().max(300)).max(10), verdict: z.enum(['send', 'rewrite']) });
 
@@ -77,6 +78,7 @@ ${untrusted(`buyer-request ${evidence[0]?.url ?? lead.opp_url}`, String(evidence
 
   const a = (lead.analysis ?? {}) as { prospect?: boolean; need?: string; language?: string; category?: string; city?: string; website?: string | null };
   const isProspect = a.prospect === true;
+  const marketing = await getSetting<{ writing_tips?: string[] }>(ctx.sql, 'marketing.strategy', {});
   const lang = ({ fr: 'French', en: 'English', nl: 'Dutch', pt: 'Portuguese' } as Record<string, string>)[a.language ?? 'fr'] ?? 'English';
   const optOut = ({ French: 'Si vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.', English: 'If you prefer not to hear from us again, just reply STOP.',
     Dutch: 'Wilt u geen berichten meer van ons ontvangen? Antwoord dan gewoon STOP.', Portuguese: 'Se preferir não receber mais mensagens nossas, basta responder STOP.' } as Record<string, string>)[lang];
@@ -93,7 +95,8 @@ ${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FRE
 Then: free quote with no obligation on simple reply; they see a preview of the finished work before receiving the invoice; files delivered on payment. Do NOT state a price in this first email.`}
 Rules (mandatory):
 - 90-150 words, plain text, no markdown, polite (${lang === 'French' ? '"vous"' : lang === 'Dutch' ? '"u"' : 'formal'}). Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
-- One clear next step: reply "oui" / "yes" to start, or ask one simple question (e.g. which services to highlight).
+- One clear next step: two buttons are added automatically under your text ("interested – get a quote" / "not interested"); invite the reader to use them
+  or simply to reply. Do not write the buttons yourself and do not list prices (the quote form lists our quick-service menu).
 - Honest only: no years of experience, past clients, testimonials, awards or portfolio. Do NOT pretend to be a human individual.
 - No pressure or urgency. End the body with this exact opt-out sentence: "${optOut}"
 - Deliverability (mandatory): no links, no attachments, no prices, no ALL CAPS, no exclamation marks, no emojis; the subject is short (max 7 words), natural and
@@ -101,6 +104,7 @@ Rules (mandatory):
 - claims_made lists every factual claim you make about our company.
 
 Our company (trusted): ${JSON.stringify({ name: profile.name, positioning: profile.positioning })}
+${marketing.writing_tips?.length ? `Guidance from our marketing strategist, based on real replies (trusted): ${marketing.writing_tips.join(' | ')}` : ''}
 ${untrusted(`business-listing ${lead.opp_url}`, String(evidence[0]?.excerpt ?? lead.opp_title), 2000)}`;
   const reviewFocus = isProspect
     ? `relevance and personalisation for this business, ${lang} language quality, professionalism and warmth, honesty (no invented claims), presence of the opt-out sentence, and a clear single next step`
@@ -135,7 +139,8 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, generated_by_task, idempotency_key,
           classification)
         values (${conv.id}, 'outbound', 'draft', ${to}, ${res.data.subject}, ${body}, ${ctx.task.id}, ${'outreach:' + leadId},
-          ${tx.json({ claims_made: res.data.claims_made, questions: res.data.questions_for_buyer, model: res.model } as never)}) returning id`;
+          ${tx.json({ claims_made: res.data.claims_made, questions: res.data.questions_for_buyer, model: res.model,
+            ...(isProspect ? { cta: { lang: a.language ?? 'fr' } } : {}) } as never)}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'message.send', title: `Send first message: ${String(lead.title).slice(0, 90)}`, requestedBy: 'sales_agent',
       reason: isProspect ? `Prospecting: ${lead.title}. The business published this professional email address.` : `Lead "${lead.title}" was approved for pursuit. This is the first reply to the buyer's public request.`,
@@ -190,9 +195,12 @@ export const triageMessage: Handler = async (ctx) => {
     return { automated: auto };
   });
   // A plain STOP / unsubscribe reply is always honoured, without depending on any AI model.
-  const optOut = /^\s*(stop|unsubscribe|remove me|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir)|afmelden|uitschrijven|cancelar|remover|n[ãa]o quero)/i.test(String(m.body));
+  const optOut = /^\s*(stop|unsubscribe|remove me|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir)|afmelden|uitschrijven|cancelar|remover|n[ãa]o quero)/i.test(String(m.body)) || /^\s*(re:\s*)?stop\b/i.test(String(m.subject ?? ''));
+  const interested = !optOut && isInterestedReply(String(m.subject ?? ''));
   const res = optOut
     ? { model: 'rule:opt-out', data: { category: 'prospect_reply', intent: 'unsubscribe', priority: 'normal', summary: 'Opt-out request (STOP)', reply_draft: null } as z.infer<typeof TriageSchema> }
+    : interested
+    ? { model: 'rule:interested-button', data: { category: 'prospect_reply', intent: 'positive', priority: 'high', summary: 'Quote request sent with the "interested" button', reply_draft: null } as z.infer<typeof TriageSchema> }
     : await ctx.ai.generate({ roleKey: 'communications', taskId: ctx.task.id, tier: 'fast', allowDowngrade: true, schema: TriageSchema,
     messages: [{ role: 'user', content: `Classify this inbound message and, if a reply is appropriate, draft a short honest reply ending with "${profile.disclosure}".
 Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrusted('inbound-message', `Subject: ${m.subject ?? ''}\nFrom: ${m.from_addr ?? ''}\n\n${m.body}`, 6000)}` }],

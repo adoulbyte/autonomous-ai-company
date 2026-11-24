@@ -24,14 +24,21 @@ export function renderText(body: string, id: Identity): string {
 }
 
 /** Clean, professional, email-client-safe HTML (inline styles, table layout). */
-export function renderHtml(body: string, id: Identity, opts: { preheader?: string; blocks?: string; personal?: boolean } = {}): string {
+export interface Cta { yes: { label: string; href: string }; no: { label: string; href: string } }
+const ctaHtml = (c: Cta) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 18px"><tr>
+<td style="background:#1a73e8;border-radius:6px"><a href="${esc(c.yes.href)}" style="display:inline-block;padding:10px 18px;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px">${esc(c.yes.label)}</a></td>
+<td style="width:10px"></td>
+<td style="border:1px solid #dadce0;border-radius:6px"><a href="${esc(c.no.href)}" style="display:inline-block;padding:9px 16px;color:#3c4043;text-decoration:none;font-size:14px">${esc(c.no.label)}</a></td>
+</tr></table>`;
+
+export function renderHtml(body: string, id: Identity, opts: { preheader?: string; blocks?: string; personal?: boolean; cta?: Cta } = {}): string {
   const paras = cleanBody(body, id).split(/\n{2,}/).map((p) =>
     p.startsWith('- ') || p.includes('\n- ')
       ? `<ul style="margin:0 0 16px 18px;padding:0">${p.split('\n').map((l) => `<li style="margin:0 0 6px">${esc(l.replace(/^-\s*/, ''))}</li>`).join('')}</ul>`
       : `<p style="margin:0 0 16px">${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
   // First contacts and follow-ups look like a normal personal email (no banner, no images): much better inbox placement.
   if (opts.personal) return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#202124">
-${paras}<p style="margin:16px 0 0;color:#3c4043">${esc(id.signature).replace(/\n/g, '<br>')}</p><p style="margin:10px 0 0;font-size:12px;color:#80868b">${esc(id.ai_disclosure)}</p></body></html>`;
+${paras}${opts.cta ? ctaHtml(opts.cta) : ''}<p style="margin:16px 0 0;color:#3c4043">${esc(id.signature).replace(/\n/g, '<br>')}</p><p style="margin:10px 0 0;font-size:12px;color:#80868b">${esc(id.ai_disclosure)}</p></body></html>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#f6f5f2;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#16181d">
 <span style="display:none;max-height:0;overflow:hidden">${esc(opts.preheader ?? '')}</span>

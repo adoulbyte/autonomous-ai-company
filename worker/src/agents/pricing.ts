@@ -38,11 +38,36 @@ export function decidePrice(i: { statedBudgetMinor: number | null; aiTypicalMino
   return { priceMinor: Math.round(price / 100) * 100, basis };   // whole currency units
 }
 
+export interface CatalogItem { label: Record<string, string>; price_minor: number; days: number }
+export interface Catalog { currency: string; items: Record<string, CatalogItem> }
+export async function getCatalog(sql: Parameters<Handler>[0]['sql']): Promise<Catalog> {
+  return getSetting<Catalog>(sql, 'pricing.catalog', { currency: 'EUR', items: { website: { label: { fr: 'Site vitrine une page', en: 'One-page website' }, price_minor: 4900, days: 3 },
+    social_pack: { label: { fr: 'Pack de 3 visuels', en: 'Pack of 3 visuals' }, price_minor: 4500, days: 2 } } });
+}
+/** The menu as text, in the client's language ("- Site vitrine une page : 49 € (3 jours)"). */
+export function catalogMenu(cat: Catalog, lang: string): string {
+  const day = ({ fr: 'jour', nl: 'dag', pt: 'dia' } as Record<string, string>)[lang] ?? 'day';
+  return Object.values(cat.items).map((i) => `- ${i.label[lang] ?? i.label.en ?? Object.values(i.label)[0]}: ${(i.price_minor / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency} (${i.days} ${day}${i.days > 1 ? 's' : ''})`).join('\n');
+}
+
 export const quoteLead: Handler = async (ctx) => {
   const leadId = String(ctx.task.input.lead_id);
   const [l] = await ctx.sql`select l.*, o.analysis, o.business_model, o.skills, o.est_hours, o.description, o.url, o.title as opp_title
       from public.leads l left join public.opportunities o on o.id = l.opportunity_id where l.id = ${leadId}`;
   if (!l) throw new PermanentError('lead not found');
+  // Local businesses from directories: fixed prices from the quick-service menu (fast, low cost), no market estimate needed.
+  if ((l.analysis as { prospect?: boolean } | null)?.prospect) {
+    const cat = await getCatalog(ctx.sql);
+    const need = (l.analysis as { need?: string }).need === 'website' ? 'website' : 'social_pack';
+    const item = cat.items[need];
+    return finish(ctx, async (tx) => {
+      const quote = { price_minor: item.price_minor, currency: cat.currency, basis: [`quick-service menu: ${need}`], catalog: need };
+      await tx`update public.leads set value_minor = ${item.price_minor}, currency = ${cat.currency}, quote = ${tx.json(quote as never)} where id = ${leadId}`;
+      await enqueue(tx, { type: 'lead.draft_outreach', key: `outreach:${leadId}`, role: 'sales_agent', entityType: 'lead', entityId: leadId,
+        input: { lead_id: leadId }, priority: 60, title: `Draft outreach: ${String(l.title).slice(0, 80)}`, timeoutSeconds: 200 });
+      return quote;
+    });
+  }
   const policy = await getSetting<PricingPolicy>(ctx.sql, 'pricing.policy', { min_price_minor: 10000, min_hourly_minor: 3000, currency: 'USD', never_exceed_stated_budget: true });
   const comps = await ctx.sql`select est_revenue_minor from public.opportunities
       where id <> ${l.opportunity_id} and est_revenue_minor > 0 and business_model = ${l.business_model ?? 'other'}

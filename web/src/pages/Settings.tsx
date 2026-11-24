@@ -44,6 +44,14 @@ const SECTIONS: Section[] = [
     { path: 'step_per_day', label: 'Augmentation chaque jour', type: 'number' },
     { path: 'max_per_day', label: 'Nouveaux contacts par jour au maximum', type: 'number' },
   ] },
+  { key: 'pricing.catalog', title: 'Carte des prestations rapides (prix fixes)', intro: 'Proposée aux commerces prospectés : le client choisit dans le formulaire de devis du bouton « Je suis intéressé ». Les agents appliquent exactement ces prix.', fields: [
+    { path: 'items.website.price_minor', label: 'Site vitrine une page', type: 'money' },
+    { path: 'items.social_post.price_minor', label: 'Visuel pour réseaux sociaux', type: 'money' },
+    { path: 'items.social_pack.price_minor', label: 'Pack de 3 visuels', type: 'money' },
+    { path: 'items.flyer_pdf.price_minor', label: 'Flyer ou menu en PDF', type: 'money' },
+    { path: 'items.ad_scripts.price_minor', label: '3 scénarios publicitaires', type: 'money' },
+    { path: 'items.spreadsheet.price_minor', label: 'Tableau Excel sur mesure', type: 'money' },
+  ] },
   { key: 'pricing.policy', title: 'Prix', intro: 'L’Analyste Prix étudie le marché pour chaque client. Ces planchers empêchent seulement de vendre à perte.', fields: [
     { path: 'min_price_minor', label: 'Prix minimum d’un projet', type: 'money' },
     { path: 'min_hourly_minor', label: 'Taux horaire minimum', type: 'money' },

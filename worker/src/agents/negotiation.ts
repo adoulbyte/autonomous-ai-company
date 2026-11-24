@@ -6,6 +6,7 @@ import { getSetting, logEvent } from '../db.js';
 import { untrusted } from '../sanitize.js';
 import { skillsFor } from '../skills.js';
 import { getMode, isPilot } from '../mode.js';
+import { catalogMenu, getCatalog } from './pricing.js';
 import type { Tx } from '../db.js';
 
 const RespondSchema = z.object({
@@ -27,7 +28,7 @@ async function moveLeadToWon(tx: Tx, leadId: string, stage: string) {
 /** lead.respond — Negotiation Agent: reply to a client, negotiate within policy, close the deal on written agreement. */
 export const respondToLead: Handler = async (ctx) => {
   const leadId = String(ctx.task.input.lead_id); const inboundId = String(ctx.task.input.message_id);
-  const [l] = await ctx.sql`select l.*, o.description as request, o.url, o.est_hours, k.email as contact_email
+  const [l] = await ctx.sql`select l.*, o.description as request, o.url, o.est_hours, o.analysis, k.email as contact_email
       from public.leads l left join public.opportunities o on o.id = l.opportunity_id left join public.contacts k on k.id = l.contact_id where l.id = ${leadId}`;
   if (!l) throw new PermanentError('lead not found');
   if (['won', 'lost', 'disqualified'].includes(l.stage as string)) return finish(ctx, async () => ({ skipped: `lead ${l.stage}` }));
@@ -44,7 +45,18 @@ export const respondToLead: Handler = async (ctx) => {
   const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
   const quote = pilot ? 0 : Number(l.value_minor ?? floor);
   const cur = String(l.currency ?? 'EUR');
-  const terms = pilot
+  const prospect = (l.analysis as { prospect?: boolean; language?: string } | null)?.prospect === true;
+  const catalog = prospect && !pilot ? await getCatalog(ctx.sql) : null;
+  const menuPrices = catalog ? Object.values(catalog.items).map((i) => i.price_minor) : [];
+  const terms = catalog
+    ? `- QUICK-SERVICE MENU (fixed prices, ${catalog.currency}, all included):
+${catalogMenu(catalog, (l.analysis as { language?: string }).language ?? 'fr')}
+- When the client is interested or sent the quote form: confirm the item(s) they chose (if none, recommend the best fit for their business), give the total
+  (sum of the chosen items' listed prices — never a discount, never a surcharge), the delivery time, what you need from them (texts, logo, photos, colours),
+  and the process: we start on their written "yes", show a preview, then send the invoice; files are delivered on payment.
+- intent=accept only when the client explicitly confirms the order in writing. agreed_price_usd = the total in ${catalog.currency} (e.g. 49 or 94).
+- scope_summary: numbered list of the chosen menu items with what each includes.`
+    : pilot
     ? `- LAUNCH PROGRAM: this work is FREE for the client (no price, no invoice). In exchange we ask only for honest feedback after delivery, and — only if they agree — permission to cite them as a reference. intent=accept when the client agrees to let us do the work. agreed_price_usd must be 0.
 - reply when accepting: confirm the scope, that we start now, that the work is free of charge, and that we will ask for their honest feedback after delivery.`
     : `- QUOTE (devis): when the client shows interest or asks for details, send a clear quote: numbered scope, price ${(quote / 100).toFixed(0)} ${cur} (all included), delivery time, and the process: we start on their written agreement, show a preview of the finished work, then send the invoice; the files are delivered as soon as the payment is received.
@@ -71,7 +83,9 @@ ${untrusted('thread', thread.map((t) => `[${t.direction}] ${String(t.body).slice
 
   const d = res.data;
   let intent = d.intent;
-  const agreed = pilot ? 0 : d.agreed_price_usd != null ? Math.round(d.agreed_price_usd * 100) : quote;
+  let agreed = pilot ? 0 : d.agreed_price_usd != null ? Math.round(d.agreed_price_usd * 100) : quote;
+  // Menu orders: the total must be made of listed prices (between the cheapest item and the whole menu).
+  if (catalog && (agreed < Math.min(...menuPrices) || agreed > menuPrices.reduce((a, b) => a + b, 0))) agreed = quote;
   let reply = d.reply;
   if (intent === 'accept' && agreed < floor) {
     intent = 'negotiate';
