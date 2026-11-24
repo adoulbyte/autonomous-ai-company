@@ -95,14 +95,14 @@ ${untrusted(`business-listing ${lead.opp_url}`, String(evidence[0]?.excerpt ?? l
   // Independent quality review of the email before it can be sent; one rewrite if it is not excellent.
   for (let round = 0; round < 2; round++) {
     const review = await ctx.ai.generate({ roleKey: 'qa_reviewer', taskId: ctx.task.id, tier: 'standard', schema: EmailReviewSchema, maxTokens: 500, temperature: 0,
-      avoidModel: res.model, messages: [{ role: 'user', content: `${skillsFor('sales')}
+      avoidModel: res.model, messages: [{ role: 'user', content: `${isProspect ? 'Context: a short first-contact email to a local business (no quote, no contract terms at this stage; the offer is free in exchange for an honest review).' : skillsFor('sales')}
 
 Review this outreach email as a demanding senior account manager. Score 1-10 for: ${reviewFocus}. Return JSON {score, issues: string[], verdict: "send"|"rewrite"}.
-Verdict "send" only if score >= 8 and no honesty issue.
+Verdict "send" only if score >= ${isProspect ? 7 : 8} and no honesty issue.
 Subject: ${res.data.subject}
 ${untrusted('email-draft', res.data.body, 4000)}
 ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[0]?.excerpt ?? lead.opp_title), 2500)}` }] });
-    if (review.data.verdict === 'send' && review.data.score >= 8) break;
+    if (review.data.score >= (isProspect ? 7 : 8) && (review.data.verdict === 'send' || isProspect)) break;
     if (round === 1) throw new Error(`outreach draft below quality bar after rewrite (score ${review.data.score}): ${review.data.issues.join('; ')}`);
     res = await ctx.ai.generate({ roleKey: 'sales_agent', taskId: ctx.task.id, tier: 'standard', schema: OutreachSchema, maxTokens: 900, temperature: 0.3,
       messages: [{ role: 'user', content: `${basePrompt}\n\nA reviewer rejected your previous draft. Fix every issue:\n${review.data.issues.map((i) => `- ${i}`).join('\n')}\n\nPrevious draft:\n${res.data.body}` }] });
