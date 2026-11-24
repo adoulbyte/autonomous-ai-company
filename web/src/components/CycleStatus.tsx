@@ -23,10 +23,14 @@ export function CycleStatus() {
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
   const { data } = useData(async () => {
     const [hb, rt] = await Promise.all([
-      q<Row[]>(supabase.from('worker_heartbeats').select('status,started_at,last_seen_at,note,tasks_succeeded').order('last_seen_at', { ascending: false }).limit(1)),
+      q<Row[]>(supabase.from('worker_heartbeats').select('status,started_at,last_seen_at,note,tasks_succeeded').order('started_at', { ascending: false }).limit(10)),
       q<Row[]>(supabase.from('settings').select('value').eq('key', 'worker.runtime')),
     ]);
-    return { hb: hb[0], rt: (rt[0]?.value ?? {}) as Row };
+    // Real rhythm: median gap between the starts of the latest cycles (what actually happens, not the theory).
+    const starts = hb.map((h) => new Date(h.started_at).getTime()).sort((a, b) => b - a);
+    const gaps = starts.slice(0, -1).map((t, i) => (t - starts[i + 1]) / 60000).filter((g) => g > 0).sort((a, b) => a - b);
+    const observed = gaps.length >= 2 ? gaps[Math.floor(gaps.length / 2)] : null;
+    return { hb: hb[0], rt: (rt[0]?.value ?? {}) as Row, observed, count24: hb.filter((h) => Date.now() - new Date(h.started_at).getTime() < 86400000).length };
   }, [], 30000);
   if (!data) return null;
   const running = data.hb?.status === 'running' && now.getTime() - new Date(data.hb.last_seen_at).getTime() < 15 * 60000;
@@ -41,8 +45,10 @@ export function CycleStatus() {
           {!running && data.hb?.note ? <span className="muted"> · {String(data.hb.note).replace(/^ran (\d+) tasks in (\d+)s$/, '$1 tâches en $2 s')}</span> : null}</dd>
         <dt>Prochain cycle</dt>
         <dd>{running ? 'juste après celui-ci si du travail attend' : `vers ${hm(next)} (dans ${dur(next.getTime() - now.getTime())})`}</dd>
-        <dt>Rythme</dt>
-        <dd>{interval < 60 ? `toutes les ${interval} minutes` : `toutes les ${interval / 60} heures`}, et en continu tant que du travail attend · GitHub peut décaler un départ de quelques minutes</dd>
+        <dt>Rythme prévu</dt>
+        <dd>{interval < 60 ? `toutes les ${interval} minutes` : `toutes les ${interval / 60} heures`}, et en continu tant que du travail attend</dd>
+        <dt>Rythme réel observé</dt>
+        <dd>{data.observed != null ? `un cycle toutes les ${dur(data.observed * 60000)} environ (médiane des derniers cycles) · ${data.count24} cycle${data.count24 > 1 ? 's' : ''} sur les dernières 24 h` : 'pas encore assez de cycles pour le mesurer'}</dd>
       </dl>
     </Card>
   );

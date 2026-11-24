@@ -1,9 +1,14 @@
 # Cloudflare Workers static assets (free plan; commercial use permitted under Cloudflare's self-serve terms).
-# No server code runs here: the app is a static SPA; all data access is enforced by Supabase RLS.
+# The app is a static SPA (all data access is enforced by Supabase RLS); the only code is a tiny clock (cron-worker.js) that starts the agents.
 name = "aic-command-center"
 compatibility_date = "2026-11-01"
+main = "cron-worker.js"
 # Cloudflare account ID is an identifier, not a credential (the API token is the secret).
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
+
+[triggers]
+crons = ["*/20 * * * *"]   # starts an agent cycle every 20 minutes (needs the DISPATCH_TOKEN secret)
