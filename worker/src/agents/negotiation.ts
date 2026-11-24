@@ -36,7 +36,11 @@ export const respondToLead: Handler = async (ctx) => {
   const pricing = await getSetting<{ min_price_minor: number; min_hourly_minor: number }>(ctx.sql, 'pricing.policy', { min_price_minor: 10000, min_hourly_minor: 3000 });
   const deals = await getSetting<{ auto_accept: boolean; max_auto_accept_minor: number }>(ctx.sql, 'deals.policy', { auto_accept: true, max_auto_accept_minor: 300000 });
   const mode = await getMode(ctx.sql);
-  const pilot = isPilot(mode);
+  // A promise is a promise: clients first contacted with the free launch offer keep it, even after the switch to paid mode.
+  const [first] = await ctx.sql`select m.subject, m.body from public.messages m join public.conversations c on c.id = m.conversation_id
+      where c.lead_id = ${leadId} and m.direction = 'outbound' and m.status = 'sent' order by m.created_at limit 1`;
+  const promisedFree = !!first && /\b(gratuit|gratuitement|offert|free of charge|for free)\b/i.test(`${first.subject ?? ''} ${first.body ?? ''}`);
+  const pilot = isPilot(mode) || promisedFree;
   const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
   const quote = pilot ? 0 : Number(l.value_minor ?? floor);
   const cur = String(l.currency ?? 'EUR');
