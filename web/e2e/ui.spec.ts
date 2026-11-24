@@ -16,13 +16,13 @@ async function login(page: Page, email: string, password = PASSWORD) {
 /** Sign in as owner and wait until the session is established before navigating. */
 async function loginOwner(page: Page) {
   await login(page, 'owner@example.test');
-  await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Tableau de bord' })).toBeVisible({ timeout: 20_000 });
 }
 
 test('rejects bad credentials and shows no data before login', async ({ page }) => {
   await login(page, 'owner@example.test', 'wrong-password');
   await expect(page.locator('.alert.bad')).toBeVisible();
-  await expect(page.getByText('Confirmed revenue')).toHaveCount(0);
+  await expect(page.getByText('Encaissé')).toHaveCount(0);
   await shot(page, '01-login-error');
 });
 
@@ -34,8 +34,8 @@ test('a signed-in non-owner is refused', async ({ page }) => {
 
 test('owner sees the real (empty) command center and every page loads without errors', async ({ page }) => {
   await loginOwner(page);
-  await expect(page.getByText('Confirmed revenue').first()).toBeVisible();
-  await expect(page.locator('.stat-value').first()).toHaveText('$0');   // no fabricated revenue
+  await expect(page.getByText('Encaissé').first()).toBeVisible();
+  await expect(page.locator('.stat-value').first()).toHaveText('0');   // no fabricated numbers
   await shot(page, '03-command-center');
   const pages = ['/approvals', '/live', '/opportunities', '/crm', '/clients', '/communications', '/projects', '/production', '/workforce', '/queue', '/tools', '/health', '/finance', '/performance', '/reports', '/settings'];
   for (const p of pages) {
@@ -71,7 +71,7 @@ test('kill switch toggles from Settings and is visible everywhere', async ({ pag
   await page.getByRole('button', { name: 'Tout arrêter' }).click();
   await expect.poll(() => sql(`select value::text from public.settings where key = 'system.kill_switch'`)).toBe('true');
   await page.goto('/');
-  await expect(page.getByText('Kill switch is ON')).toBeVisible();
+  await expect(page.getByText("Arrêt d'urgence activé")).toBeVisible();
   await shot(page, '05-kill-switch-on');
   await page.goto('/settings');
   await page.getByRole('button', { name: 'Relancer' }).click();
