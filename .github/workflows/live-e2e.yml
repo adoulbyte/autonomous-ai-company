@@ -3,9 +3,7 @@ name: Live end-to-end
 # on an ephemeral Postgres. Proves discovery, AI analysis, scoring, outreach drafting, planning,
 # production and independent QA work with live data — without touching production.
 on:
-  push:
-    branches: ['claude/**']
-  workflow_dispatch:
+  workflow_dispatch:          # on demand only (about 17 CI minutes per run)
 permissions:
   contents: read
   models: read

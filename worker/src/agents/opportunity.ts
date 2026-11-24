@@ -11,6 +11,8 @@ import { getMode, isPilot } from '../mode.js';
 
 interface BusinessProfile { name: string; positioning: string; skills: string[]; excluded: string[]; target_hourly_rate_minor: number; currency: string; disclosure: string }
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 /** Deterministic prefilter: avoid spending AI calls on items with no overlap with what we can deliver. */
 export function skillOverlap(text: string, skills: string[]): string[] {
   const t = text.toLowerCase();
@@ -42,9 +44,10 @@ export const runSource: Handler = async (ctx) => {
     throw e;
   }
   const profile = await getSetting<BusinessProfile>(ctx.sql, 'business.profile', { skills: [] } as unknown as BusinessProfile);
+  const requireEmail = (await getSetting<{ require_email_contact_for_outreach?: boolean }>(ctx.sql, 'comms.policy', {})).require_email_contact_for_outreach === true;
 
   return finish(ctx, async (tx) => {
-    let created = 0, duplicates = 0, prefiltered = 0;
+    let created = 0, duplicates = 0, prefiltered = 0, unreachable = 0;
     for (const it of items) {
       const contentHash = sha256(it.text);
       const [ev] = await tx`insert into public.evidence(source_key, url, content_hash, title, excerpt, raw)
@@ -79,14 +82,19 @@ export const runSource: Handler = async (ctx) => {
             values (${opp.id}, 'reject', ${['Prefilter: no overlap with business skills']}, 'agent:opportunity_scout')`;
         prefiltered++; continue;
       }
+      if (requireEmail && !EMAIL_RE.test(String(it.buyerContact ?? ''))) {
+        await tx`update public.opportunities set status = 'monitoring', decision = 'monitor',
+            decision_reasons = ${['No published email address: cannot be contacted autonomously (no AI call spent)']} where id = ${opp.id}`;
+        unreachable++; continue;
+      }
       await enqueue(tx, { type: 'opportunity.analyze', key: `analyze:${opp.id}`, role: 'research_analyst', entityType: 'opportunity',
         entityId: opp.id, input: { opportunity_id: opp.id }, priority: 40, title: `Analyze: ${it.title.slice(0, 80)}`, timeoutSeconds: 240 });
     }
     await tx`update public.sources set last_run_at = now(), health = 'healthy', consecutive_failures = 0, last_error = null,
         items_found_total = items_found_total + ${created} where key = ${key}`;
-    await logEvent(tx, 'source', key, 'discovery_completed', `${source.name}: ${items.length} items, ${created} new, ${duplicates} duplicates, ${prefiltered} prefiltered`,
-      { found: items.length, created, duplicates, prefiltered });
-    return { found: items.length, created, duplicates, prefiltered };
+    await logEvent(tx, 'source', key, 'discovery_completed', `${source.name}: ${items.length} items, ${created} new, ${duplicates} duplicates, ${prefiltered} prefiltered, ${unreachable} without email`,
+      { found: items.length, created, duplicates, prefiltered, unreachable });
+    return { found: items.length, created, duplicates, prefiltered, unreachable };
   });
 };
 
@@ -190,9 +198,10 @@ export const scoreOpportunityTask: Handler = async (ctx) => {
     p_win: num(opp.p_win), p_paid: num(opp.p_paid), skill_fit: num(opp.skill_fit), strategic_value: num(opp.strategic_value),
     evidence_quality: num(opp.evidence_quality), competition: num(opp.competition), risk: num(opp.risk),
     posted_at: opp.posted_at as Date | null, risk_flags: opp.risk_flags as string[],
+    pilot: isPilot(await getMode(ctx.sql)),
   }, weights, rules);
   const comms = await getSetting<{ require_email_contact_for_outreach: boolean }>(ctx.sql, 'comms.policy', { require_email_contact_for_outreach: false });
-  const hasEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(opp.buyer_contact ?? ''));
+  const hasEmail = EMAIL_RE.test(String(opp.buyer_contact ?? ''));
   const mode = await getMode(ctx.sql);
   if (r.status === 'shortlisted' && isPilot(mode)) {
     const [{ n }] = await ctx.sql`select count(*)::int as n from public.projects where budget_minor = 0 and status in ('planning','in_progress','in_qa','revision','ready_for_delivery')`;

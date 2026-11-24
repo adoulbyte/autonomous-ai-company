@@ -164,3 +164,18 @@ describe('job connectors', () => {
     expect(r.map((x) => x.buyerContact)).toEqual(['cto@acme.dev']);
   });
 });
+
+describe('launch program scoring (free work for a review)', () => {
+  const base = { est_revenue_minor: null, est_cost_minor: 0, est_hours: 6, p_win: 0.6, p_paid: 0.1, skill_fit: 0.85, strategic_value: 0.6,
+    evidence_quality: 0.8, competition: 0.3, risk: 0.2, posted_at: new Date(), risk_flags: ['unpaid'] };
+  it('does not reject a well-fitting request just because it has no budget', () => {
+    expect(scoreOpportunity(base, W, R).status).toBe('rejected');
+    const r = scoreOpportunity({ ...base, pilot: true }, W, R);
+    expect(r.status).toBe('shortlisted');
+    expect(r.reasons.join(' ')).toMatch(/Launch program/);
+    expect(r.components.find((c) => c.key === 'value')!.weight).toBe(0);
+  });
+  it('still blocks illegal or deceptive work in the launch program', () => {
+    expect(scoreOpportunity({ ...base, pilot: true, risk_flags: ['scam_signals'] }, W, R).status).toBe('rejected');
+  });
+});

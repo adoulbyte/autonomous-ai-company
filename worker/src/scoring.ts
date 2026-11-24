@@ -22,6 +22,9 @@ export interface ScoringInput {
   posted_at: Date | string | null;
   risk_flags?: string[];
   now?: Date;
+  /** Launch program (free work for a review): revenue is irrelevant, so value and payment
+   *  probability are not scored and "unpaid"/"spec work" postings are acceptable. */
+  pilot?: boolean;
 }
 export interface ScoreComponent { key: string; label: string; normalized: number; weight: number; points: number; explanation: string }
 export interface ScoreResult {
@@ -46,8 +49,19 @@ export function validateWeights(w: ScoringWeights): void {
   if (Math.abs(sum - 1) > 0.01) throw new Error(`weights must sum to 1 (got ${sum.toFixed(3)})`);
 }
 
-export function scoreOpportunity(input: ScoringInput, w: ScoringWeights, rules: ScoringRules): ScoreResult {
-  validateWeights(w);
+const PILOT_ACCEPTED_FLAGS = ['unpaid', 'spec_work'];
+
+/** In the launch program, money-related weights are redistributed proportionally over the other criteria. */
+export function pilotWeights(w: ScoringWeights): ScoringWeights {
+  const rest = 1 - w.value - w.p_paid;
+  const k = rest > 0 ? 1 / rest : 1;
+  return { ...w, value: 0, p_paid: 0, p_win: w.p_win * k, speed: w.speed * k, skill_fit: w.skill_fit * k, strategic: w.strategic * k,
+    evidence: w.evidence * k, freshness: w.freshness * k, competition: w.competition * k, risk: w.risk * k };
+}
+
+export function scoreOpportunity(input: ScoringInput, weights: ScoringWeights, rules: ScoringRules): ScoreResult {
+  validateWeights(weights);
+  const w = input.pilot ? pilotWeights(weights) : weights;
   const now = input.now ?? new Date();
   const ageDays = input.posted_at ? Math.max(0, (now.getTime() - new Date(input.posted_at).getTime()) / 86_400_000) : null;
   const revenue = Math.max(0, input.est_revenue_minor ?? 0);
@@ -82,14 +96,14 @@ export function scoreOpportunity(input: ScoringInput, w: ScoringWeights, rules: 
   const score = Math.round(components.reduce((s, c) => s + c.points, 0) * 100) / 100;
 
   const flags = (input.risk_flags ?? []).map((f) => f.toLowerCase());
-  const blocking = flags.filter((f) => BLOCKING_FLAGS.includes(f));
+  const blocking = flags.filter((f) => BLOCKING_FLAGS.includes(f) && !(input.pilot && PILOT_ACCEPTED_FLAGS.includes(f)));
   const hard = [
     { rule: 'skill_fit', passed: fit >= rules.min_skill_fit, detail: `skill fit ${pct(fit)} (min ${pct(rules.min_skill_fit)})` },
     { rule: 'risk', passed: risk <= rules.max_risk, detail: `risk ${pct(risk)} (max ${pct(rules.max_risk)})` },
     { rule: 'freshness', passed: ageDays == null || ageDays <= rules.max_age_days, detail: ageDays == null ? 'age unknown' : `${ageDays.toFixed(0)} days (max ${rules.max_age_days})` },
     { rule: 'evidence', passed: evidence >= rules.min_evidence_quality, detail: `evidence ${pct(evidence)} (min ${pct(rules.min_evidence_quality)})` },
     { rule: 'blocking_flags', passed: blocking.length === 0, detail: blocking.length ? `blocking flags: ${blocking.join(', ')}` : 'none' },
-    { rule: 'min_value', passed: revenue === 0 || revenue >= rules.min_value_minor, detail: revenue ? `${money(revenue)} (min ${money(rules.min_value_minor)})` : 'value unknown' },
+    { rule: 'min_value', passed: input.pilot || revenue === 0 || revenue >= rules.min_value_minor, detail: revenue ? `${money(revenue)} (min ${money(rules.min_value_minor)})` : 'value unknown' },
   ];
 
   const failed = hard.filter((h) => !h.passed);
@@ -112,6 +126,7 @@ export function scoreOpportunity(input: ScoringInput, w: ScoringWeights, rules: 
     decision = 'reject'; status = 'rejected';
     reasons.push(`Score ${score} < monitor threshold ${rules.monitor_threshold}`, `Weakest — ${weak.join('; ')}`);
   }
-  reasons.push(`Expected value (P(win)×P(paid)×(revenue−cost)) = ${money(ev)}`);
+  if (input.pilot) reasons.push('Launch program: judged on fit, feasibility and reachability (work offered free for a review), not on revenue');
+  else reasons.push(`Expected value (P(win)×P(paid)×(revenue−cost)) = ${money(ev)}`);
   return { score, decision, status, reasons, components, hard_constraints: hard, expected_value_minor: ev, weights_version: w.version };
 }

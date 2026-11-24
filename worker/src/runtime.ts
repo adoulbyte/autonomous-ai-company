@@ -56,7 +56,7 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   for (const s of due) {
     const slot = Math.floor(now.getTime() / (Number(s.interval_minutes) * 60_000));
     await enqueue(sql, { type: 'discovery.run_source', key: `discovery:${s.key}:${slot}`, role: 'opportunity_scout', entityType: 'source',
-      entityId: s.key as string, input: { source_key: s.key }, priority: 30, title: `Discover: ${s.name}`, timeoutSeconds: 180 });
+      entityId: s.key as string, input: { source_key: s.key }, priority: 70, title: `Discover: ${s.name}`, timeoutSeconds: 180 });
     await sql`update public.sources set next_run_at = ${new Date(now.getTime() + Number(s.interval_minutes) * 60_000)} where key = ${s.key}`;
     sources++;
   }
