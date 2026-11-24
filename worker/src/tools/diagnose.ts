@@ -19,5 +19,13 @@ try {
   show('pending task age', await sql`select type, min(created_at) oldest, min(run_after) next_run_after from public.tasks where status = 'pending' group by 1`.catch((e) => String(e.message)));
   show('settings', await sql`select key, value from public.settings where key in ('business.mode','comms.policy','scoring.rules','system.kill_switch','autonomy.policy')`);
   show('worker heartbeats', await sql`select worker_id, status, last_seen_at, tasks_succeeded, tasks_failed, note from public.worker_heartbeats order by last_seen_at desc limit 8`);
+  // Masked addresses: first 2 characters + domain only.
+  const mask = (a: unknown) => { const s = String(a ?? ''); const [u, d] = s.split('@'); return d ? `${u.slice(0, 2)}***@${d}` : s ? 'non-email' : null; };
+  const out = await sql`select status, sent_at, created_at, from_addr, to_addr, left(subject, 80) subject, send_attempts, left(last_error, 200) last_error
+      from public.messages where direction = 'outbound' order by created_at desc limit 20`;
+  show('outbound emails (masked)', out.map((m) => ({ ...m, from_addr: mask(m.from_addr), to_addr: mask(m.to_addr) })));
+  const inn = await sql`select created_at, from_addr, left(subject, 80) subject, classification->>'category' category from public.messages where direction = 'inbound' order by created_at desc limit 20`;
+  show('inbound emails (masked)', inn.map((m) => ({ ...m, from_addr: mask(m.from_addr) })));
+  show('mailbox used by the agents (masked)', (await sql`select mailbox, last_poll_at, last_uid, last_error from public.mailbox_state`).map((m) => ({ ...m, mailbox: mask(m.mailbox) })));
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
 finally { await sql.end({ timeout: 5 }); }
