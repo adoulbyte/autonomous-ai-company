@@ -139,4 +139,21 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .main { padding: 18px 16px 48px; }
   .grid-2, .form-grid { grid-template-columns: 1fr; }
   .kv { grid-template-columns: 1fr; }
+  .kv dd { margin-bottom: 8px; overflow-wrap: anywhere; }
+  .sidebar { top: 0; bottom: 0; left: 0; overflow-y: auto; padding-top: max(16px, env(safe-area-inset-top)); }
+  .mobile-bar { padding-top: max(12px, env(safe-area-inset-top)); }
+  .main { padding-bottom: max(48px, env(safe-area-inset-bottom)); }
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .spread { flex-wrap: wrap; gap: 8px; }
+  .row { flex-wrap: wrap; }
+  h1 { font-size: 22px; }
+  .stat-value { font-size: 22px; }
+  input, select, textarea { font-size: 16px; }   /* no automatic zoom when typing on iPhone/Android */
+  .btn { min-height: 40px; }
+}
+@media (max-width: 560px) {
+  .grid-4 { grid-template-columns: 1fr 1fr !important; }
+  .grid-3, .grid-2 { grid-template-columns: 1fr !important; }
+  .main { padding-left: 12px; padding-right: 12px; }
+  table { font-size: 13px; }
 }

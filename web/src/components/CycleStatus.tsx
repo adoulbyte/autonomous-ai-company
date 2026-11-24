@@ -34,7 +34,8 @@ export function CycleStatus() {
   }, [], 30000);
   if (!data) return null;
   const running = data.hb?.status === 'running' && now.getTime() - new Date(data.hb.last_seen_at).getTime() < 15 * 60000;
-  const interval = Number(data.rt.interval_minutes ?? 120); const offset = Number(data.rt.minute_offset ?? 23);
+  // Default: the Cloudflare clock starts a cycle every 20 minutes (at :00, :20 and :40).
+  const interval = Number(data.rt.public === false ? 120 : 20); const offset = data.rt.public === false ? 23 : 0;
   const next = nextStart(now, interval, offset);
   const last = data.hb ? new Date(data.hb.last_seen_at) : null;
   return (

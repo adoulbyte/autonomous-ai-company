@@ -78,6 +78,7 @@ public class MainActivity extends Activity {
       showApp(u);
     });
     box.addView(title); box.addView(help); box.addView(input); box.addView(ok);
+    box.setFitsSystemWindows(true);
     setContentView(box);
   }
 
@@ -92,8 +93,8 @@ public class MainActivity extends Activity {
     s.setAllowFileAccess(false);
     s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
     s.setDatabaseEnabled(true);
-    s.setLoadWithOverviewMode(true);
-    s.setUseWideViewPort(true);
+    s.setUseWideViewPort(true);           // honours the page's mobile viewport (width=device-width)
+    s.setTextZoom(100);                   // ignore the phone's font scaling so the layout stays as designed
     web.setBackgroundColor(Color.parseColor("#F6F5F2"));
     final String host = Uri.parse(url).getHost();
     web.setWebViewClient(new WebViewClient() {
@@ -131,7 +132,21 @@ public class MainActivity extends Activity {
       }
     });
     web.setOnLongClickListener(v -> false);
-    setContentView(web);
+    // Keep the page below the status bar and above the navigation bar (Android 15 draws apps edge to edge).
+    android.widget.FrameLayout frame = new android.widget.FrameLayout(this);
+    frame.setBackgroundColor(Color.parseColor("#111827"));
+    frame.setOnApplyWindowInsetsListener((v, insets) -> {
+      if (android.os.Build.VERSION.SDK_INT >= 30) {
+        android.graphics.Insets b = insets.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
+        v.setPadding(b.left, b.top, b.right, b.bottom);
+      } else {
+        v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+      }
+      return insets;
+    });
+    frame.addView(web);
+    setContentView(frame);
+    frame.requestApplyInsets();
     web.loadUrl(url);
   }
 
