@@ -21,6 +21,8 @@ export const DEFAULT_CITIES: [string, number, number][] = [
 
 const PUBLIC_OR_UNSUITABLE = /^(townhall|school|college|university|kindergarten|place_of_worship|police|fire_station|hospital|clinic|courthouse|prison|post_office|library|social_facility|community_centre|bank|atm|fuel|parking|public_bookcase|grave_yard|government|political_party|religion|diplomatic|charging_station|vending_machine)$/;
 
+export const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee'];
+
 interface OsmEl { type: string; id: number; tags?: Record<string, string> }
 
 export function businessCategory(t: Record<string, string>): string | null {
@@ -58,7 +60,13 @@ export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) =>
   const r = Number(config.radius_m ?? 6000);
   const keys = '~"^(shop|craft|office|amenity|tourism|healthcare|leisure)$"~"."';
   const q = `[out:json][timeout:50];(nwr(around:${r},${lat},${lon})["name"]["email"][${keys}];nwr(around:${r},${lat},${lon})["name"]["contact:email"][${keys}];);out tags 400;`;
-  const data = await getJson<{ elements: OsmEl[] }>(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn });
+  // Public Overpass instances (official + community mirrors): try the next one when a server is overloaded.
+  let data: { elements: OsmEl[] } | null = null; let lastErr: unknown = null;
+  for (const host of OVERPASS_HOSTS) {
+    try { data = await getJson<{ elements: OsmEl[] }>(`https://${host}/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn }); break; }
+    catch (e) { lastErr = e; }
+  }
+  if (!data) throw lastErr;
   const seen = new Set<string>();
   const out: RawOpportunity[] = [];
   for (const el of data.elements ?? []) {

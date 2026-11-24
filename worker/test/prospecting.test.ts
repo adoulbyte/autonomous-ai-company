@@ -101,3 +101,12 @@ describe('continuous prospecting cycle', () => {
   });
   void HANDLERS;
 });
+
+describe('overpass fallback', () => {
+  it('uses a mirror when the main server is overloaded', async () => {
+    const { osmBusinesses } = await import('../src/connectors/osm.js');
+    const f = (async (url: string) => url.startsWith('https://overpass-api.de') ? new Response('busy', { status: 502 }) : Response.json(OSM)) as unknown as typeof fetch;
+    const items = await osmBusinesses({ config: { cursor: 0 }, maxItems: 10, env: {}, fetchFn: f });
+    expect(items.length).toBe(3);
+  });
+});
