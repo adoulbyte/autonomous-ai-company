@@ -138,6 +138,14 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
   });
 };
 
+/** Bounce = the address does not exist; autoreply = out-of-office. Both are machine-generated. */
+export function classifyAutomated(from: string, subject: string, body: string): 'bounce' | 'autoreply' | null {
+  const f = from.toLowerCase(); const s = subject.toLowerCase();
+  if (/mailer-daemon|postmaster|mail delivery (sub)?system/.test(f) || /(undeliverable|undelivered|delivery status notification|delivery has failed|mail delivery failed|returned mail|non remis|non distribu|échec de (la )?(remise|distribution)|adresse introuvable)/.test(s)) return 'bounce';
+  if (/(automatic reply|auto(matic)?[- ]?reply|réponse automatique|absence|out of office|en congé|congés)/.test(s) || /^(no-?reply|noreply)@/.test(f) || /\bauto-submitted:\s*auto/i.test(body)) return 'autoreply';
+  return null;
+}
+
 const TriageSchema = z.object({
   category: z.enum(['client', 'prospect_reply', 'opportunity', 'billing', 'spam', 'vendor', 'legal', 'other']),
   intent: z.enum(['positive', 'neutral', 'negative', 'question', 'unsubscribe', 'not_applicable']),
@@ -155,6 +163,17 @@ export const triageMessage: Handler = async (ctx) => {
   if (m.classification) return finish(ctx, async () => ({ skipped: 'already classified' }));
   const injection = detectInjection(`${m.subject ?? ''}\n${m.body}`);
   const profile = await getSetting<{ disclosure: string }>(ctx.sql, 'business.profile', {} as never);
+  // Automated messages (bounces, out-of-office) are never treated as a client reply and never answered.
+  const auto = classifyAutomated(String(m.from_addr ?? ''), String(m.subject ?? ''), String(m.body ?? ''));
+  if (auto) return finish(ctx, async (tx) => {
+    await tx`update public.messages set classification = ${tx.json({ category: 'other', intent: 'not_applicable', priority: 'low', summary: auto === 'bounce' ? 'Delivery failure (address does not exist)' : 'Automatic reply (out of office)', automated: auto } as never)} where id = ${id}`;
+    if (auto === 'bounce' && m.lead_id) {
+      // The published address does not work: stop contacting it and close the lead.
+      await tx`update public.contacts set do_not_contact = true where id = (select contact_id from public.leads where id = ${m.lead_id})`;
+      await tx`update public.leads set stage = 'lost', lost_reason = 'email bounced', next_follow_up_at = null where id = ${m.lead_id} and stage not in ('won','lost','disqualified')`;
+    }
+    return { automated: auto };
+  });
   // A plain STOP / unsubscribe reply is always honoured, without depending on any AI model.
   const optOut = /^\s*(stop|unsubscribe|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir))/i.test(String(m.body));
   const res = optOut

@@ -248,3 +248,13 @@ describe('company logo in emails', () => {
     expect(logoAttachment({ ...id, logo_data_url: 'javascript:alert(1)' })).toBeNull();
   });
 });
+
+import { classifyAutomated } from '../src/agents/sales.js';
+describe('automated emails', () => {
+  it('recognises bounces and out-of-office replies, not real replies', () => {
+    expect(classifyAutomated('mailer-daemon@googlemail.com', 'Delivery Status Notification (Failure)', '')).toBe('bounce');
+    expect(classifyAutomated('postmaster@orange.fr', 'Message non remis', '')).toBe('bounce');
+    expect(classifyAutomated('contact@boulangerie.fr', 'Réponse automatique : absence', '')).toBe('autoreply');
+    expect(classifyAutomated('contact@boulangerie.fr', 'Re: Votre site web', 'Oui ça nous intéresse')).toBeNull();
+  });
+});

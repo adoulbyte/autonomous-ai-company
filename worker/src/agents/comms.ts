@@ -34,6 +34,7 @@ export const sendOutbox: Handler = async (ctx) => {
   const id = await identity(ctx.sql);
   let sent = 0, failed = 0;
   for (const m of queue) {
+    if (/(mailer-daemon|postmaster|no-?reply)@/i.test(String(m.to_addr))) { await ctx.sql`update public.messages set status = 'rejected', last_error = 'automated address: never answered' where id = ${m.id}`; continue; }
     const dnc = await ctx.sql`select 1 from public.contacts where lower(email) = lower(${m.to_addr}) and do_not_contact`;
     if (dnc.length) { await ctx.sql`update public.messages set status = 'rejected', last_error = 'recipient is do-not-contact' where id = ${m.id}`; continue; }
     const prev = await ctx.sql`select email_message_id from public.messages where conversation_id = ${m.conversation_id} and email_message_id is not null order by created_at`;

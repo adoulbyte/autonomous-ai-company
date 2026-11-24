@@ -21,7 +21,7 @@ async function load() {
     count('messages', (b) => b.eq('direction', 'outbound').eq('status', 'sent').like('to_addr', '%@%').gte('sent_at', today)),
     // Only real replies to our prospecting (inbound emails in a conversation with a prospect), not Google/vendor notifications.
     (async () => { const { count, error } = await supabase.from('messages').select('id, conversations!inner(lead_id)', { count: 'exact', head: true })
-      .eq('direction', 'inbound').not('conversations.lead_id', 'is', null); if (error) throw new Error(error.message); return count ?? 0; })(),
+      .eq('direction', 'inbound').not('conversations.lead_id', 'is', null).is('classification->>automated', null); if (error) throw new Error(error.message); return count ?? 0; })(),
     count('projects', (b) => b.in('status', ['planning', 'in_progress', 'in_qa', 'revision', 'ready_for_delivery'])),
     count('projects', (b) => b.in('status', ['delivered', 'accepted', 'closed'])),
     q<Row[]>(supabase.from('messages').select('id,to_addr,subject,sent_at').eq('direction', 'outbound').eq('status', 'sent').like('to_addr', '%@%').order('sent_at', { ascending: false }).limit(8)),
