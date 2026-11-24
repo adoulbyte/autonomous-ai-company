@@ -2,7 +2,7 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { getSetting, logEvent, type Sql } from '../db.js';
 import { enqueue } from '../queue.js';
-import { renderHtml, renderText, type Identity } from '../email/template.js';
+import { LOGO_CID, logoAttachment, renderHtml, renderText, type Identity } from '../email/template.js';
 import { scrubSecrets } from '../sanitize.js';
 
 export async function identity(sql: Sql): Promise<Identity> {
@@ -41,9 +41,10 @@ export const sendOutbox: Handler = async (ctx) => {
     try {
       const attachments = ((m.attachments as { filename: string; content_b64: string; contentType?: string }[]) ?? [])
         .map((a) => ({ filename: a.filename, content: Buffer.from(a.content_b64, 'base64'), contentType: a.contentType }));
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? '') });
+      const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
-        text: renderText(m.body, id), html: (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? '') }),
-        inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments });
+        text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments });
       await ctx.sql.begin(async (tx) => {
         await tx`select set_config('app.actor', 'agent:mail_clerk', true)`;
         await tx`update public.messages set status = 'sent', sent_at = now(), email_message_id = ${r.messageId}, from_addr = ${ctx.mail!.address}, send_attempts = send_attempts + 1 where id = ${m.id}`;

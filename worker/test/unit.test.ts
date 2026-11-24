@@ -236,3 +236,15 @@ describe('public logs', () => {
     expect(publicLogLine('RetryableError: fetch failed for hello@x.fr')).not.toContain('hello@');
   });
 });
+
+import { logoAttachment, renderHtml } from '../src/email/template.js';
+describe('company logo in emails', () => {
+  const id = { company_name: 'Test Studio', sender_name: 'T', tagline: 't', website: '', signature: 's', ai_disclosure: 'd' };
+  it('shows the logo as an inline image when one is configured, the initial otherwise', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    expect(renderHtml('Bonjour', { ...id, logo_data_url: png })).toContain('cid:company-logo');
+    expect(logoAttachment({ ...id, logo_data_url: png })?.cid).toBe('company-logo');
+    expect(renderHtml('Bonjour', id)).not.toContain('cid:');
+    expect(logoAttachment({ ...id, logo_data_url: 'javascript:alert(1)' })).toBeNull();
+  });
+});

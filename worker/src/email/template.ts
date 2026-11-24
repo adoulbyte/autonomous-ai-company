@@ -1,4 +1,11 @@
-export interface Identity { company_name: string; sender_name: string; tagline: string; website: string; signature: string; ai_disclosure: string }
+export interface Identity { company_name: string; sender_name: string; tagline: string; website: string; signature: string; ai_disclosure: string; logo_data_url?: string }
+
+/** The logo travels as an inline attachment (cid:), which Gmail and Outlook display; data: URLs are blocked by most mail clients. */
+export const LOGO_CID = 'company-logo';
+export function logoAttachment(id: Identity) {
+  const m = /^data:(image\/(?:png|jpeg|gif));base64,([A-Za-z0-9+/=]+)$/.exec(id.logo_data_url ?? '');
+  return m ? { filename: `logo.${m[1].split('/')[1].replace('jpeg', 'jpg')}`, content: Buffer.from(m[2], 'base64'), contentType: m[1], cid: LOGO_CID } : null;
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -29,7 +36,8 @@ export function renderHtml(body: string, id: Identity, opts: { preheader?: strin
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border:1px solid #e7e4dd;border-radius:12px">
 <tr><td style="padding:22px 28px;border-bottom:1px solid #e7e4dd">
   <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-  <td style="width:34px;height:34px;background:#111827;border-radius:8px;color:#d4af6a;font-weight:700;text-align:center;font-size:16px">${esc(id.company_name.charAt(0))}</td>
+  ${logoAttachment(id) ? `<td><img src="cid:${LOGO_CID}" alt="${esc(id.company_name)}" height="64" style="display:block;height:64px;width:auto;border:0;border-radius:50%"></td>`
+    : `<td style="width:34px;height:34px;background:#111827;border-radius:8px;color:#d4af6a;font-weight:700;text-align:center;font-size:16px">${esc(id.company_name.charAt(0))}</td>`}
   <td style="padding-left:12px"><div style="font-weight:650;font-size:15px">${esc(id.company_name)}</div><div style="font-size:12px;color:#6b6f78">${esc(id.tagline)}</div></td>
   </tr></table></td></tr>
 <tr><td style="padding:26px 28px;font-size:14.5px;line-height:1.6">${paras}${opts.blocks ?? ''}</td></tr>

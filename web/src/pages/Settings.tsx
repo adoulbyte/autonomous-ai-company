@@ -4,7 +4,7 @@ import { useData } from '../lib/hooks';
 import { dt } from '../lib/format';
 import { ActionButton, Badge, Card, ErrorBox, PageHead } from '../components/ui';
 
-type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'toggle' | 'percent' | 'select';
+type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'toggle' | 'percent' | 'select' | 'image';
 interface Field { path: string; label: string; type: FieldType; help?: string; placeholder?: string; options?: { value: string; label: string }[] }
 interface Section { key: string; title: string; intro: string; fields: Field[] }
 
@@ -14,6 +14,7 @@ const SECTIONS: Section[] = [
     { path: 'max_active_pilots', label: 'Projets gratuits en cours au maximum', type: 'number' },
   ] },
   { key: 'business.identity', title: 'Identité de la société', intro: 'Utilisée dans tous les e-mails, propositions et factures envoyés aux clients.', fields: [
+    { path: 'logo_data_url', label: 'Logo (affiché en haut de chaque e-mail)', type: 'image', help: 'PNG ou JPG. Il est réduit automatiquement ; il reste dans ta base, jamais dans le code.' },
     { path: 'company_name', label: 'Nom de la société', type: 'text' },
     { path: 'representative', label: 'Représentant', type: 'text' },
     { path: 'sender_name', label: "Nom d'expéditeur des e-mails", type: 'text' },
@@ -58,6 +59,18 @@ const SECTIONS: Section[] = [
   ] },
 ];
 
+/** Resize an uploaded logo to at most 240 px (keeps emails light) and return it as a PNG data URL. */
+async function shrinkImage(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url; });
+    const k = Math.min(1, 240 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  } finally { URL.revokeObjectURL(url); }
+}
+
 const get = (o: Row, p: string) => p.split('.').reduce((a: any, k) => (a == null ? a : a[k]), o);
 const set = (o: Row, p: string, v: unknown) => { const c = structuredClone(o); const ks = p.split('.'); let t: any = c; ks.slice(0, -1).forEach((k) => (t = t[k] ??= {})); t[ks.at(-1)!] = v; return c; };
 
@@ -75,6 +88,15 @@ function SettingForm({ section, setting, onSaved }: { section: Section; setting:
           if (f.type === 'select') return (
             <label key={f.path} className="field">{f.label}
               <select value={val ?? ''} onChange={(e) => setV(set(v, f.path, e.target.value))}>{f.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+            </label>);
+          if (f.type === 'image') return (
+            <label key={f.path} className="field" style={{ gridColumn: '1 / -1' }}>{f.label}
+              <div className="row">
+                {val ? <img src={val} alt="logo" style={{ height: 72, width: 'auto', borderRadius: 8, background: '#fff', border: '1px solid var(--border)' }} /> : <span className="faint">Aucun logo</span>}
+                <input type="file" accept="image/png,image/jpeg" style={{ width: 'auto' }} onChange={async (e) => { const file = e.target.files?.[0]; if (file) setV(set(v, f.path, await shrinkImage(file))); }} />
+                {val && <button type="button" className="btn sm ghost" onClick={() => setV(set(v, f.path, ''))}>Retirer</button>}
+              </div>
+              {f.help && <span className="faint">{f.help}</span>}
             </label>);
           if (f.type === 'toggle') return (
             <label key={f.path} className="row" style={{ gridColumn: '1 / -1', fontSize: 13 }}>

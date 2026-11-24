@@ -5,7 +5,7 @@ import { simpleParser } from 'mailparser';
 export interface OutgoingMail {
   from: string; to: string; subject: string; text: string; html?: string;
   inReplyTo?: string | null; references?: string[];
-  attachments?: { filename: string; content: string | Buffer; contentType?: string }[];
+  attachments?: { filename: string; content: string | Buffer; contentType?: string; cid?: string }[];
 }
 export interface IncomingMail {
   uid: number; messageId: string | null; inReplyTo: string | null; references: string[];
