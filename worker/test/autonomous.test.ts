@@ -55,6 +55,7 @@ beforeAll(async () => {
   db = await freshDb(); sql = db.sql; await registerOwner(sql);
   await sql`update public.settings set value = '{"mode": "paid", "max_active_pilots": 10, "ask_review": true}' where key = 'business.mode'`;
   await sql`update public.settings set value = value || '{"currency": "USD"}'::jsonb where key = 'pricing.policy'`;
+  await sql`update public.settings set value = value || '{"company_name": "Test Studio", "sender_name": "J. Doe — Test Studio", "signature": "J. Doe — Test Studio", "ai_disclosure": "Test Studio delivers with AI-assisted production and independent quality control."}'::jsonb where key = 'business.identity'`;
   await sql`update public.settings set value = value || '{"enabled": true, "beneficiary": "Autonomous AI Studio", "iban": "FR76 3000 6000 0112 3456 7890 189", "bic": "AGRIFRPP"}'::jsonb where key = 'finance.payment_instructions'`;
 });
 afterAll(async () => { await db.drop(); });
@@ -64,8 +65,8 @@ describe('paid deal cycle (owner validates the invoice and the payment)', () => 
     await run('a-1');
     const first = outbox.find((m) => m.subject.includes('Python CSV automation'));
     expect(first?.to).toBe('ops@acme-logistics.example');
-    expect(first?.html).toContain('[company]');
-    expect(first?.text).toContain('[representative]');
+    expect(first?.html).toContain('Test Studio');
+    expect(first?.text).toContain('J. Doe');
     expect(first?.text).toContain('AI-assisted production');
     clientWrites('Agreed for 800 USD, please go ahead.');
     await run('a-2');

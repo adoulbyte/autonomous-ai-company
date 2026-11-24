@@ -28,10 +28,10 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <>
       {data?.kill && <div className="kill-on">Arrêt d'urgence activé : les agents sont à l'arrêt. Désactive-le dans Paramètres.</div>}
-      <div className="mobile-bar"><strong>[company]</strong><button className="btn sm" onClick={() => setOpen(!open)}>Menu</button></div>
+      <div className="mobile-bar"><strong>Centre de commande</strong><button className="btn sm" onClick={() => setOpen(!open)}>Menu</button></div>
       <div className="app">
         <aside className={`sidebar ${open ? 'open' : ''}`} onClick={() => setOpen(false)}>
-          <div className="brand"><div className="brand-mark">▲</div><div>[company]<div className="small muted" style={{ fontWeight: 400 }}>Centre de commande</div></div></div>
+          <div className="brand"><div className="brand-mark">▲</div><div>Centre de commande<div className="small muted" style={{ fontWeight: 400 }}>Société pilotée par IA</div></div></div>
           {NAV.map((s) => (
             <div key={s.section}>
               <div className="nav-section">{s.section}</div>

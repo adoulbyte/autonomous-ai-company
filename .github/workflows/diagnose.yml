@@ -16,12 +16,6 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
       - run: npm ci
         working-directory: worker
-      - name: Command center reachability
-        run: |
-          for u in https://aic-command-center.your-subdomain.workers.dev/ https://aic-command-center.your-subdomain.workers.dev/login; do
-            curl -sS -o /tmp/page -w "$u -> HTTP %{http_code} (%{size_download} bytes, %{time_total}s)\n" "$u" || true
-          done
-          head -c 400 /tmp/page; echo
       - name: Prospecting source probe
         working-directory: worker
         run: npx tsx src/tools/probe-osm.ts

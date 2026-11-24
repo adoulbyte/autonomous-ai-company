@@ -1,21 +1,7 @@
 -- =====================================================================
--- 0016 [company] identity, larger prospecting capacity, more sources
+-- 0016 Larger prospecting capacity, more sources
+-- history-rewritten: the company identity is configured in Settings (database), not in the code.
 -- =====================================================================
-update public.settings set value = '{
-  "company_name": "[company]",
-  "sender_name": "[representative] — [company]",
-  "representative": "[representative]",
-  "title": "Fondateur & Directeur des opérations",
-  "tagline": "Software · Automation · Data · AI solutions — delivered with independent quality control",
-  "website": "",
-  "signature": "[representative]\nFounder & Head of Delivery — [company]\nSoftware · Automation · Data · AI solutions",
-  "ai_disclosure": "[company] delivers with AI-assisted production and independent quality control.",
-  "reply_language": "match_client"
-}'::jsonb, version = version + 1, updated_by = 'migration:0016' where key = 'business.identity';
-
-update public.settings set value = jsonb_set(value, '{name}', '"[company]"') || '{"disclosure": "[company] delivers with AI-assisted production and independent quality control."}'::jsonb,
-  version = version + 1, updated_by = 'migration:0016' where key = 'business.profile';
-
 -- Gmail allows ~500 recipients/day on a standard account; stay under it with a safety margin.
 update public.settings set value = value || '{"daily_send_cap": 400, "max_outreach_per_day": 250, "followup_after_days": 3}'::jsonb,
   version = version + 1, updated_by = 'migration:0016' where key = 'comms.policy';

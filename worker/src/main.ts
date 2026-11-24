@@ -21,8 +21,10 @@ try {
       and type not in ('comms.send','comms.poll_inbox','analytics.snapshot','system.health_check','strategy.review')`;
   const [{ runs }] = await sql`select count(*)::int as runs from public.worker_heartbeats where last_seen_at > now() - interval '24 hours'`;
   const killed = (await getSetting<boolean>(sql, 'system.kill_switch', false)) === true;
-  const chain = !killed && !stopping && sched.chain_when_backlog !== false && backlog > 0 && runs < (sched.max_runs_per_day ?? 6);
-  console.log(`backlog: ${backlog} task(s); runs in last 24h: ${runs}/${sched.max_runs_per_day ?? 6}; chain next run: ${chain}`);
+  // Public repository = unlimited free minutes: chain freely (still bounded). Private: stay inside the monthly allowance.
+  const maxRuns = process.env.REPO_PRIVATE === 'false' ? 150 : (sched.max_runs_per_day ?? 6);
+  const chain = !killed && !stopping && sched.chain_when_backlog !== false && backlog > 0 && runs < maxRuns;
+  console.log(`backlog: ${backlog} task(s); runs in last 24h: ${runs}/${maxRuns}; chain next run: ${chain}`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `chain=${chain}\n`);
 } catch (e) {
   console.error('worker crashed:', (e as Error).message);

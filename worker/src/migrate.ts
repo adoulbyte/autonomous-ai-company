@@ -17,8 +17,19 @@ export async function migrate(databaseUrl: string, dir = join(dirname(fileURLToP
     for (const f of files) {
       const body = readFileSync(join(dir, f), 'utf8');
       const sum = createHash('sha256').update(body).digest('hex');
+      // A migration whose text was scrubbed from the repository history (personal data removed) carries this marker:
+      // it is not re-run; only its recorded name/checksum is updated. Its effects on the live database are unchanged.
+      const scrubbed = body.includes('-- history-rewritten');
+      const sameVersion = [...applied.keys()].find((n) => n !== f && n.slice(0, 15) === f.slice(0, 15));
+      if (!applied.has(f) && scrubbed && sameVersion) {
+        await sql`update ops.schema_migrations set name = ${f}, checksum = ${sum} where name = ${sameVersion}`;
+        applied.delete(sameVersion); applied.set(f, sum); log(`recorded scrubbed migration ${f}`); continue;
+      }
       if (applied.has(f)) {
-        if (applied.get(f) !== sum) throw new Error(`migration ${f} was modified after being applied (checksum mismatch). Create a new migration instead.`);
+        if (applied.get(f) !== sum) {
+          if (!scrubbed) throw new Error(`migration ${f} was modified after being applied (checksum mismatch). Create a new migration instead.`);
+          await sql`update ops.schema_migrations set checksum = ${sum} where name = ${f}`; log(`recorded scrubbed migration ${f}`);
+        }
         continue;
       }
       log(`applying ${f}`);

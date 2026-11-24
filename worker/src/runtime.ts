@@ -15,6 +15,11 @@ import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
 
+/** Log lines are public on a public repository: no email addresses, no business names, no message content. */
+export function publicLogLine(msg: string): string {
+  return msg.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>').split(/: (?=[^:]*$)|\(score|\. /)[0].slice(0, 110);
+}
+
 export const HANDLERS: Record<string, Handler> = {
   'discovery.run_source': runSource,
   'opportunity.analyze': analyzeOpportunity,
@@ -97,9 +102,9 @@ export async function executeTask(o: RuntimeOptions, ai: AiGateway, task: TaskRo
     const err = e as Error;
     const msg = scrubSecrets(`${err.name}: ${err.message}`);
     if (err instanceof LeaseLostError) { log(`! lease lost ${task.id}`); return 'lease_lost'; }
-    if (err instanceof DeferError) { log(`… deferred ${task.type}: ${msg}`); return defer(o.sql, task.id, o.workerId, err.seconds, msg); }
+    if (err instanceof DeferError) { log(`… deferred ${task.type}: ${publicLogLine(msg)}`); return defer(o.sql, task.id, o.workerId, err.seconds, msg); }
     const state = await fail(o.sql, task.id, o.workerId, msg, !(err instanceof PermanentError));
-    log(`✗ ${task.type} ${task.id} → ${state}: ${msg}`);
+    log(`✗ ${task.type} ${task.id} → ${state}: ${publicLogLine(msg)}`);   // full detail is stored in the database, not in public logs
     return state;
   } finally {
     clearInterval(hb); if (timer) clearTimeout(timer);

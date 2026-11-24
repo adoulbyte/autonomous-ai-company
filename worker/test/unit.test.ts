@@ -227,3 +227,12 @@ describe('client-ready deliverable files', () => {
     expect(staticChecks('<div>' + 'x'.repeat(300) + '</div>', 'html').join(' ')).toMatch(/complete HTML/);
   });
 });
+
+import { publicLogLine } from '../src/runtime.js';
+describe('public logs', () => {
+  it('never contain email addresses or message details', () => {
+    const l = publicLogLine("Error: outreach draft below quality bar after rewrite (score 7): L'email ne cite pas La Grande Pharmacie; contact jane@pharma.fr");
+    expect(l).not.toMatch(/@|Pharmacie/);
+    expect(publicLogLine('RetryableError: fetch failed for hello@x.fr')).not.toContain('hello@');
+  });
+});
