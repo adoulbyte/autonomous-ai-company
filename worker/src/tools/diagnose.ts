@@ -13,7 +13,10 @@ try {
   show('messages by direction/status', await sql`select direction, status, count(*)::int n from public.messages group by 1,2`);
   show('approvals by type/status', await sql`select action_type, status, count(*)::int n from public.approvals group by 1,2 order by 3 desc`);
   show('tasks by type/status', await sql`select type, status, count(*)::int n from public.tasks group by 1,2 order by 1,2`);
-  show('recent task errors', await sql`select type, left(last_error, 300) err, count(*)::int n from public.tasks where last_error is not null group by 1,2 order by 3 desc limit 15`);
+  show('sources', await sql`select key, kind, enabled, health, consecutive_failures, left(last_error, 200) last_error, items_found_total, next_run_at from public.sources order by key`);
+  show('discovery results (latest per source)', await sql`select distinct on (input->>'source_key') input->>'source_key' src, status, output, finished_at from public.tasks where type = 'discovery.run_source' order by input->>'source_key', created_at desc`.catch((e) => String(e.message)));
+  show('task errors', await sql`select type, status, left(error, 250) err, count(*)::int n from public.tasks where error is not null group by 1,2,3 order by 4 desc limit 15`);
+  show('pending task age', await sql`select type, min(created_at) oldest, min(run_after) next_run_after from public.tasks where status = 'pending' group by 1`.catch((e) => String(e.message)));
   show('settings', await sql`select key, value from public.settings where key in ('business.mode','comms.policy','scoring.rules','system.kill_switch','autonomy.policy')`);
   show('worker heartbeats', await sql`select worker_id, status, last_seen_at, tasks_succeeded, tasks_failed, note from public.worker_heartbeats order by last_seen_at desc limit 8`);
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
