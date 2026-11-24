@@ -1,6 +1,10 @@
 package app.commandcenter;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.os.Handler;
+import android.os.Looper;
+import android.webkit.ConsoleMessage;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -32,6 +36,9 @@ public class MainActivity extends Activity {
   private static final int FILE_REQUEST = 42;
   private WebView web;
   private ValueCallback<Uri[]> fileCallback;
+  private String lastError = "";
+  private String currentUrl = "";
+  private boolean checked = false;
 
   @Override protected void onCreate(Bundle state) {
     super.onCreate(state);
@@ -60,10 +67,11 @@ public class MainActivity extends Activity {
     input.setHint("https://…");
     input.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
     input.setSingleLine(true);
+    input.setText(prefs().getString(KEY_URL, currentUrl));
     Button ok = new Button(this);
     ok.setText("Ouvrir la plateforme");
     ok.setOnClickListener(v -> {
-      String u = input.getText().toString().trim();
+      String u = input.getText().toString().trim().replaceAll("\\s+", "");
       if (!u.startsWith("http")) u = "https://" + u;
       if (!u.startsWith("https://") || u.length() < 12) { Toast.makeText(this, "Adresse invalide (elle doit commencer par https://)", Toast.LENGTH_LONG).show(); return; }
       prefs().edit().putString(KEY_URL, u).apply();
@@ -74,6 +82,8 @@ public class MainActivity extends Activity {
   }
 
   private void showApp(String url) {
+    currentUrl = url; checked = false;
+    WebView.setWebContentsDebuggingEnabled(true);
     web = new WebView(this);
     web.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     WebSettings s = web.getSettings();
@@ -81,6 +91,10 @@ public class MainActivity extends Activity {
     s.setDomStorageEnabled(true);            // keeps you signed in
     s.setAllowFileAccess(false);
     s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+    s.setDatabaseEnabled(true);
+    s.setLoadWithOverviewMode(true);
+    s.setUseWideViewPort(true);
+    web.setBackgroundColor(Color.parseColor("#F6F5F2"));
     final String host = Uri.parse(url).getHost();
     web.setWebViewClient(new WebViewClient() {
       @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
@@ -90,10 +104,25 @@ public class MainActivity extends Activity {
         return true;
       }
       @Override public void onReceivedError(WebView view, int code, String description, String failingUrl) {
-        Toast.makeText(MainActivity.this, "Connexion impossible. Vérifie Internet, puis réessaie.", Toast.LENGTH_LONG).show();
+        lastError = "Erreur réseau : " + description;
+      }
+      @Override public void onPageFinished(WebView view, String loaded) {
+        // If nothing is displayed a few seconds after loading, explain why and offer a way out (instead of a blank screen).
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+          if (checked || web == null) return;
+          web.evaluateJavascript("(function(){var r=document.getElementById('root');return r?String(r.innerText.length+r.children.length):'-1';})()", v -> {
+            String n = v == null ? "" : v.replace("\"", "");
+            if (n.equals("0") || n.equals("-1") || n.equals("null")) showProblem();
+            else checked = true;
+          });
+        }, 7000);
       }
     });
     web.setWebChromeClient(new WebChromeClient() {   // lets the Settings page upload a logo from the phone
+      @Override public boolean onConsoleMessage(ConsoleMessage m) {
+        if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) lastError = m.message() + " (" + m.lineNumber() + ")";
+        return super.onConsoleMessage(m);
+      }
       @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         fileCallback = callback;
@@ -104,6 +133,18 @@ public class MainActivity extends Activity {
     web.setOnLongClickListener(v -> false);
     setContentView(web);
     web.loadUrl(url);
+  }
+
+  private void showProblem() {
+    if (isFinishing()) return;
+    checked = true;
+    new AlertDialog.Builder(this)
+      .setTitle("La page ne s'affiche pas")
+      .setMessage("Adresse : " + currentUrl + (lastError.isEmpty() ? "" : "\n\nDétail : " + lastError) + "\n\nVérifie l'adresse (la même que dans Chrome) ou ouvre la plateforme dans Chrome.")
+      .setPositiveButton("Réessayer", (d, w) -> { checked = false; lastError = ""; web.reload(); })
+      .setNeutralButton("Changer l'adresse", (d, w) -> { prefs().edit().remove(KEY_URL).apply(); web = null; showSetup(); })
+      .setNegativeButton("Ouvrir dans Chrome", (d, w) -> { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl))); } catch (Exception ignored) { } })
+      .show();
   }
 
   @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
