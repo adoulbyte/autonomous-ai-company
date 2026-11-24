@@ -59,16 +59,16 @@ const SECTIONS: Section[] = [
   ] },
 ];
 
-/** Resize an uploaded logo to at most 240 px (keeps emails light) and return it as a PNG data URL. */
+/** Resize an uploaded logo to at most 240 px (keeps emails light) and return it as a PNG data URL.
+ *  Uses FileReader → data: URL (allowed by the site's security policy; blob: URLs are not). */
 async function shrinkImage(file: File): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url; });
-    const k = Math.min(1, 240 / Math.max(img.width, img.height));
-    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-    c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL('image/png');
-  } finally { URL.revokeObjectURL(url); }
+  if (!/^image\/(png|jpeg)$/.test(file.type)) throw new Error('Format non pris en charge : choisis une image PNG ou JPG.');
+  const dataUrl = await new Promise<string>((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(new Error('Lecture du fichier impossible.')); r.readAsDataURL(file); });
+  const img = await new Promise<HTMLImageElement>((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ko(new Error('Image illisible.')); i.src = dataUrl; });
+  const k = Math.min(1, 240 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
 }
 
 const get = (o: Row, p: string) => p.split('.').reduce((a: any, k) => (a == null ? a : a[k]), o);
@@ -76,6 +76,7 @@ const set = (o: Row, p: string, v: unknown) => { const c = structuredClone(o); c
 
 function SettingForm({ section, setting, onSaved }: { section: Section; setting: Row | undefined; onSaved: () => void }) {
   const [v, setV] = useState<Row>(setting?.value ?? {});
+  const [note, setNote] = useState('');
   useEffect(() => setV(setting?.value ?? {}), [setting?.value]);
   if (!setting) return null;
   const dirty = JSON.stringify(v) !== JSON.stringify(setting.value);
@@ -93,9 +94,13 @@ function SettingForm({ section, setting, onSaved }: { section: Section; setting:
             <label key={f.path} className="field" style={{ gridColumn: '1 / -1' }}>{f.label}
               <div className="row">
                 {val ? <img src={val} alt="logo" style={{ height: 72, width: 'auto', borderRadius: 8, background: '#fff', border: '1px solid var(--border)' }} /> : <span className="faint">Aucun logo</span>}
-                <input type="file" accept="image/png,image/jpeg" style={{ width: 'auto' }} onChange={async (e) => { const file = e.target.files?.[0]; if (file) setV(set(v, f.path, await shrinkImage(file))); }} />
-                {val && <button type="button" className="btn sm ghost" onClick={() => setV(set(v, f.path, ''))}>Retirer</button>}
+                <input type="file" accept="image/png,image/jpeg" style={{ width: 'auto' }} onChange={async (e) => {
+                  const file = e.target.files?.[0]; if (!file) return;
+                  try { setV(set(v, f.path, await shrinkImage(file))); setNote('Logo chargé ✔ — clique sur « Enregistrer » en bas de cette section.'); }
+                  catch (err) { setNote((err as Error).message); } }} />
+                {val && <button type="button" className="btn sm ghost" onClick={() => { setV(set(v, f.path, '')); setNote('Logo retiré — clique sur « Enregistrer ».'); }}>Retirer</button>}
               </div>
+              {note && <span className="small" style={{ fontWeight: 600 }}>{note}</span>}
               {f.help && <span className="faint">{f.help}</span>}
             </label>);
           if (f.type === 'toggle') return (
