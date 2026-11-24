@@ -12,7 +12,7 @@ interface AlgoliaItem { id: number; author: string | null; text: string | null; 
 
 /** HN "Who is hiring?" — keep only contract / freelance / part-time posts (work a service company can take). */
 export const hnHiring: Connector = async ({ config, maxItems, fetchFn }) => {
-  const search = await getJson<AlgoliaSearch>('https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=%22who%20is%20hiring%22&hitsPerPage=3', { fetchFn });
+  const search = await getJson<AlgoliaSearch>('https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=12', { fetchFn });
   const maxAge = Number(config.max_thread_age_days ?? 75);
   const thread = search.hits.filter((h) => /who is hiring/i.test(h.title)).find((h) => (Date.now() - new Date(h.created_at).getTime()) / 86_400_000 <= maxAge);
   if (!thread) return [];

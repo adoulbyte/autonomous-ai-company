@@ -62,6 +62,9 @@ export function pilotWeights(w: ScoringWeights): ScoringWeights {
 export function scoreOpportunity(input: ScoringInput, weights: ScoringWeights, rules: ScoringRules): ScoreResult {
   validateWeights(weights);
   const w = input.pilot ? pilotWeights(weights) : weights;
+  // Launch program: a slightly vague request is acceptable (the first email asks clarifying questions);
+  // fit, risk and the blocking flags for illegal/deceptive work are unchanged.
+  if (input.pilot) rules = { ...rules, min_evidence_quality: Math.min(rules.min_evidence_quality, 0.15), shortlist_threshold: rules.shortlist_threshold - 8 };
   const now = input.now ?? new Date();
   const ageDays = input.posted_at ? Math.max(0, (now.getTime() - new Date(input.posted_at).getTime()) / 86_400_000) : null;
   const revenue = Math.max(0, input.est_revenue_minor ?? 0);

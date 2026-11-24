@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { CONNECTORS } from '../connectors/index.js';
+import { enrichContacts } from '../connectors/enrich.js';
 import { PermanentError, RetryableError } from '../errors.js';
 import { clamp01, detectInjection, normalizeForFingerprint, sha256, untrusted } from '../sanitize.js';
 import { enqueue } from '../queue.js';
@@ -45,6 +46,10 @@ export const runSource: Handler = async (ctx) => {
   }
   const profile = await getSetting<BusinessProfile>(ctx.sql, 'business.profile', { skills: [] } as unknown as BusinessProfile);
   const requireEmail = (await getSetting<{ require_email_contact_for_outreach?: boolean }>(ctx.sql, 'comms.policy', {})).require_email_contact_for_outreach === true;
+  // Postings without a printed email: look up the company's own published business contact (bounded in time).
+  const knownIds = new Set((await ctx.sql`select external_id from public.opportunities where source_key = ${key}
+      and external_id = any(${items.map((i) => i.externalId)})`).map((r) => String(r.external_id)));
+  const enriched = requireEmail ? await enrichContacts(items.filter((i) => !knownIds.has(i.externalId)), { env: ctx.env, fetchFn: ctx.fetchFn, budgetMs: 70_000 }) : 0;
 
   return finish(ctx, async (tx) => {
     let created = 0, duplicates = 0, prefiltered = 0, unreachable = 0;
@@ -92,9 +97,9 @@ export const runSource: Handler = async (ctx) => {
     }
     await tx`update public.sources set last_run_at = now(), health = 'healthy', consecutive_failures = 0, last_error = null,
         items_found_total = items_found_total + ${created} where key = ${key}`;
-    await logEvent(tx, 'source', key, 'discovery_completed', `${source.name}: ${items.length} items, ${created} new, ${duplicates} duplicates, ${prefiltered} prefiltered, ${unreachable} without email`,
-      { found: items.length, created, duplicates, prefiltered, unreachable });
-    return { found: items.length, created, duplicates, prefiltered, unreachable };
+    await logEvent(tx, 'source', key, 'discovery_completed', `${source.name}: ${items.length} items, ${created} new, ${duplicates} duplicates, ${prefiltered} prefiltered, ${enriched} contacts found on company sites, ${unreachable} without email`,
+      { found: items.length, created, duplicates, prefiltered, enriched, unreachable });
+    return { found: items.length, created, duplicates, prefiltered, enriched, unreachable };
   });
 };
 

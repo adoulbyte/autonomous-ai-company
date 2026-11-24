@@ -179,3 +179,35 @@ describe('launch program scoring (free work for a review)', () => {
     expect(scoreOpportunity({ ...base, pilot: true, risk_flags: ['scam_signals'] }, W, R).status).toBe('rejected');
   });
 });
+
+import { companySites, enrichContacts, pickRoleEmail, robotsAllows } from '../src/connectors/enrich.js';
+describe('contact enrichment (published business addresses only)', () => {
+  it('finds the company site but ignores job boards, ATS and social links', () => {
+    expect(companySites('Apply at https://jobs.lever.co/acme or see https://www.acme.io/team and https://github.com/acme')).toEqual(['acme.io']);
+  });
+  it('keeps only role addresses on the company domain', () => {
+    const html = 'Write to jane.doe@acme.io or hello@acme.io — press: someone@gmail.com';
+    expect(pickRoleEmail(html, 'acme.io')).toBe('hello@acme.io');
+    expect(pickRoleEmail('jane.doe@acme.io', 'acme.io')).toBeNull();
+  });
+  it('honours robots.txt', () => {
+    expect(robotsAllows('User-agent: *\nDisallow: /contact', '/contact')).toBe(false);
+    expect(robotsAllows('User-agent: *\nDisallow: /admin', '/contact')).toBe(true);
+  });
+  it('fills the contact from the company website and records where it was published', async () => {
+    const fake = (async (url: string) => {
+      if (url === 'https://acme.io/contact') return new Response('<a href="mailto:contact@acme.io">contact</a>', { headers: { 'content-type': 'text/html' } });
+      return new Response('nothing', { status: 404 });
+    }) as unknown as typeof fetch;
+    const items = [{ externalId: '1', url: 'u', title: 't', text: 'We build https://acme.io', raw: {} as Record<string, unknown>, buyerContact: null }];
+    expect(await enrichContacts(items, { env: {}, fetchFn: fake, budgetMs: 5000 })).toBe(1);
+    expect(items[0].buyerContact).toBe('contact@acme.io');
+    expect(items[0].raw.contact_published_at).toBe('https://acme.io/contact');
+  });
+  it('launch program accepts a somewhat vague request (clarifying questions) but not an unclear one', () => {
+    const vague = { est_revenue_minor: null, est_cost_minor: 0, est_hours: 5, p_win: 0.5, p_paid: 0.1, skill_fit: 0.7, strategic_value: 0.5,
+      evidence_quality: 0.2, competition: 0.3, risk: 0.2, posted_at: new Date(), pilot: true };
+    expect(scoreOpportunity(vague, W, R).hard_constraints.find((h) => h.rule === 'evidence')!.passed).toBe(true);
+    expect(scoreOpportunity({ ...vague, evidence_quality: 0.1 }, W, R).status).toBe('rejected');
+  });
+});

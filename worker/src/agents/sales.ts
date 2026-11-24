@@ -46,7 +46,7 @@ export const draftOutreach: Handler = async (ctx) => {
   const profile = await getSetting<{ name: string; positioning: string; skills: string[]; disclosure: string }>(ctx.sql, 'business.profile', {} as never);
   const mode = await getMode(ctx.sql);
   const offerTerms = isPilot(mode)
-    ? `Offer (trusted): as part of our launch program we will do this work FREE OF CHARGE, with the same quality standards (independent double quality review). In exchange we only ask for honest feedback once it is delivered — and, only if they agree, permission to mention them as a reference. Make clear there is no obligation and no hidden cost. Do not mention a price.`
+    ? `Offer (trusted): as part of our launch program we will do this work FREE OF CHARGE, with the same quality standards (independent double quality review). In exchange we only ask for honest feedback once it is delivered — and, only if they agree, permission to mention them as a reference. Make clear there is no obligation and no hidden cost. Do not mention a price. If the request leaves important points open (scope, format, access, deadline), ask at most 3 short, precise questions so the work can start right away.`
     : `Our price for this work (trusted, set by our market analysis): ${lead.value_minor ? (Number(lead.value_minor) / 100).toFixed(0) + ' ' + lead.currency : 'to be confirmed after scoping'}.
 Payment terms (trusted): the work is fully produced and quality-checked first; deliverables are released once the invoice is paid.`;
 
