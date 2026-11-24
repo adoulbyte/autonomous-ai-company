@@ -1,5 +1,6 @@
 // Prints how many contactable businesses the prospecting source finds for the first cities (no data stored).
-import { osmBusinesses } from '../connectors/osm.js';
+import { osmBusinesses, qleverBusinesses } from '../connectors/osm.js';
+{ const t = Date.now(); try { const r = await qleverBusinesses('Lyon', 50); console.log(`qlever Lyon: ${r.length} elements in ${Date.now() - t} ms; sample: ${JSON.stringify(r[0]?.tags ?? null).slice(0, 200)}`); } catch (e) { console.log(`qlever failed after ${Date.now() - t} ms: ${(e as Error).message}`); } }
 for (const [cursor, radius] of [[0, 1500], [1, 4000]]) {
   const t = Date.now();
   try {

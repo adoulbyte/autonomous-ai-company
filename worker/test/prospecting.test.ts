@@ -110,3 +110,16 @@ describe('overpass fallback', () => {
     expect(items.length).toBe(3);
   });
 });
+
+describe('QLever (OSM planet) source', () => {
+  it('maps SPARQL results to businesses', async () => {
+    const { osmBusinesses } = await import('../src/connectors/osm.js');
+    const f = (async (url: string) => url.startsWith('https://qlever.cs.uni-freiburg.de') ? Response.json({ results: { bindings: [
+      { osm: { value: 'https://www.openstreetmap.org/node/42' }, t_name: { value: 'Fleuriste Rose' }, t_email: { value: 'bonjour@fleuriste-rose.example' }, t_shop: { value: 'florist' } },
+      { osm: { value: 'https://www.openstreetmap.org/node/43' }, t_name: { value: 'Chain' }, t_email: { value: 'x@chain.example' }, t_shop: { value: 'clothes' }, t_brand: { value: 'Chain' } },
+    ] } }) : new Response('down', { status: 502 })) as unknown as typeof fetch;
+    const items = await osmBusinesses({ config: { cursor: 0 }, maxItems: 10, env: {}, fetchFn: f });
+    expect(items.map((i) => i.buyerContact)).toEqual(['bonjour@fleuriste-rose.example']);
+    expect(items[0].url).toBe('https://www.openstreetmap.org/node/42');
+  });
+});
