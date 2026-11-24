@@ -53,7 +53,8 @@ export const quoteLead: Handler = async (ctx) => {
 
   const res = await ctx.ai.generate({ roleKey: 'pricing_analyst', taskId: ctx.task.id, tier: 'standard', schema: MarketSchema, maxTokens: 700,
     messages: [{ role: 'user', content: `You are a pricing analyst. Estimate the realistic MARKET price an independent professional/small agency would charge for this work
-(global remote market, mid-level quality). Return JSON {low_usd, typical_usd, high_usd, typical_hourly_rate_usd, rationale}.
+(market of the client's country — e.g. France for a French local business — mid-level quality). All amounts in ${policy.currency}
+(the JSON keys keep the _usd suffix but the values are in ${policy.currency}). Return JSON {low_usd, typical_usd, high_usd, typical_hourly_rate_usd, rationale}.
 Base it on scope, skills and effort; mention the evidence you used. Do not invent facts about the client.
 Skills: ${JSON.stringify(l.skills ?? [])}; estimated effort: ${l.est_hours ?? 'unknown'} hours; business model: ${l.business_model ?? 'unknown'}.
 ${untrusted(`request ${l.url}`, String(l.description ?? l.opp_title), 5000)}` }] });

@@ -54,11 +54,12 @@ const run = (w: string) => runWorker({ sql, workerId: w, env, fetchFn: net.fn, m
 beforeAll(async () => {
   db = await freshDb(); sql = db.sql; await registerOwner(sql);
   await sql`update public.settings set value = '{"mode": "paid", "max_active_pilots": 10, "ask_review": true}' where key = 'business.mode'`;
+  await sql`update public.settings set value = value || '{"currency": "USD"}'::jsonb where key = 'pricing.policy'`;
   await sql`update public.settings set value = value || '{"enabled": true, "beneficiary": "Autonomous AI Studio", "iban": "FR76 3000 6000 0112 3456 7890 189", "bic": "AGRIFRPP"}'::jsonb where key = 'finance.payment_instructions'`;
 });
 afterAll(async () => { await db.drop(); });
 
-describe('fully autonomous deal cycle (owner only validates the payment)', () => {
+describe('paid deal cycle (owner validates the invoice and the payment)', () => {
   it('prospects by email, closes the deal on the client\'s written agreement, produces, double-QAs and sends invoice + preview', async () => {
     await run('a-1');
     const first = outbox.find((m) => m.subject.includes('Python CSV automation'));
@@ -77,6 +78,12 @@ describe('fully autonomous deal cycle (owner only validates the payment)', () =>
     const [lead] = await sql`select stage, agreed_price_minor from public.leads`;
     expect(lead.stage).toBe('won');
     expect((await sql`select count(*)::int n from public.qa_reviews where verdict = 'pass'`)[0].n).toBe(2);
+    // The owner validates the invoice; the system then sends it.
+    expect(outbox.some((m) => m.subject.startsWith('Invoice INV-'))).toBe(false);
+    const [ap] = await sql`select id from public.approvals where action_type = 'payment.request.send' and status = 'pending'`;
+    expect(ap).toBeDefined();
+    await asOwner(sql, (tx) => tx`select public.decide_approval(${ap.id}, true, 'facture validée')`);
+    await run('a-3b');
     const invMail = outbox.find((m) => m.subject.startsWith('Invoice INV-'));
     expect(invMail).toBeDefined();
     expect(invMail!.attachments?.[0].filename).toMatch(/^INV-.*\.pdf$/);

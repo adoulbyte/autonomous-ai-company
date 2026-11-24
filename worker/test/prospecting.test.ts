@@ -45,6 +45,7 @@ const net = fakeFetch({ ai, json: { 'https://overpass-api.de/api/interpreter': O
 beforeAll(async () => {
   db = await freshDb(); sql = db.sql; await registerOwner(sql);
   await sql`update public.sources set enabled = (key = 'osm_businesses')`;
+  await sql`update public.settings set value = value || '{"mode": "free_pilot"}'::jsonb where key = 'business.mode'`;
   await sql`update public.settings set value = jsonb_build_object('start_per_day', 2, 'step_per_day', 10, 'max_per_day', 120, 'started_at', now()) where key = 'prospecting.policy'`;
 });
 afterAll(async () => { await db?.drop(); });

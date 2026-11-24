@@ -128,6 +128,13 @@ ${untrusted('project-scope', String(p.scope), 5000)}` }] });
   });
 };
 
+/** Projects for French-speaking clients get French emails and invoices. */
+async function projectIsFrench(sql: Tx | Parameters<Handler>[0]['sql'], projectId: string): Promise<boolean> {
+  const [r] = await sql`select o.analysis->>'language' as lang from public.projects p join public.leads l on l.id = p.lead_id
+      left join public.opportunities o on o.id = l.opportunity_id where p.id = ${projectId}`;
+  return r?.lang === 'fr';
+}
+
 /** Turn a deliverable into the file the client actually uses (PDF, Excel-ready CSV, website, SVG...). */
 export async function deliverableFile(d: Record<string, unknown>, i: number, projectName: string) {
   const base = `${String(i + 1).padStart(2, '0')}-${String(d.title).replace(/[^\w.-]+/g, '_').replace(/_(html|pdf|csv|svg|md)$/i, '').slice(0, 60)}`;
@@ -286,28 +293,33 @@ export const prepareDelivery: Handler = async (ctx) => {
     }
     const manifest = dels.map((d) => `- ${d.title}`).join('\n');
     const id = await identity(ctx.sql);
+    const fr = await projectIsFrench(tx, projectId);
+    const due = inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : String(inv.due_date);
+    const amount = `${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}`;
     const pay = await getSetting<PaymentInstructions>(ctx.sql, 'finance.payment_instructions', { enabled: false, text: '', beneficiary: '', iban: '', bic: '', bank: '', reference_hint: '' });
     const full = await tx`select title, content, format from public.deliverables where project_id = ${projectId} and status = 'ready_for_delivery' order by work_item`;
     const previews = full.map((d) => { const c = String(d.content); const cut = Math.max(400, Math.min(1500, Math.floor(c.length * 0.25)));
-      return previewBlock(String(d.title), c.slice(0, cut) + (c.length > cut ? '\n…' : ''), `Preview of ${Math.round((cut / c.length) * 100)}% — full version released on payment. Passed two independent quality reviews.`); }).join('');
+      return previewBlock(String(d.title), c.slice(0, cut) + (c.length > cut ? '\n…' : ''), fr ? `Aperçu de ${Math.round((cut / c.length) * 100)} % — version complète envoyée dès réception du paiement. Validé par deux contrôles qualité indépendants.` : `Preview of ${Math.round((cut / c.length) * 100)}% — full version released on payment. Passed two independent quality reviews.`); }).join('');
     const [client] = await tx`select co.name from public.clients cl join public.companies co on co.id = cl.company_id where cl.id = ${p.client_id}`;
     const pdf = await renderInvoicePdf({ number: inv.number, issue_date: String(inv.issue_date instanceof Date ? inv.issue_date.toISOString().slice(0, 10) : inv.issue_date),
       due_date: String(inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : inv.due_date), amount_minor: Number(inv.amount_minor), currency: String(inv.currency),
       client_name: client?.name ?? 'Client', client_email: p.contact_email ?? null, project_name: String(p.name),
-      lines: [{ description: String(p.name), amount_minor: Number(inv.amount_minor) }] }, id, pay);
+      lines: [{ description: String(p.name), amount_minor: Number(inv.amount_minor) }] }, id, pay, fr ? 'fr' : 'en');
     const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
         values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Your project is ready: ' + p.name}) returning id`;
-    const body = `Hello,\n\nGood news: the work for "${p.name}" is complete and has passed our independent quality review (${dels.length} deliverable${dels.length > 1 ? 's' : ''}):\n\n${manifest}\n\nInvoice ${inv.number}: ${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}, due ${inv.due_date instanceof Date ? inv.due_date.toISOString().slice(0, 10) : inv.due_date}.\nThe deliverables are released automatically as soon as payment is received.\n\nThis message was prepared by an AI-assisted business system.`;
-    const html = renderHtml(body, id, { preheader: `Your project is ready — preview inside`, blocks: previews });
+    const body = fr
+      ? `Bonjour,\n\nBonne nouvelle : le travail pour « ${p.name} » est terminé et a été validé par notre contrôle qualité indépendant (${dels.length} livrable${dels.length > 1 ? 's' : ''}) :\n\n${manifest}\n\nVous trouverez ci-dessous un aperçu, et en pièce jointe la facture ${inv.number} : ${amount}, à régler avant le ${due}.\nLes fichiers complets vous sont envoyés automatiquement dès réception du paiement.`
+      : `Hello,\n\nGood news: the work for "${p.name}" is complete and has passed our independent quality review (${dels.length} deliverable${dels.length > 1 ? 's' : ''}):\n\n${manifest}\n\nInvoice ${inv.number}: ${amount}, due ${due}.\nThe deliverables are released automatically as soon as payment is received.\n\nThis message was prepared by an AI-assisted business system.`;
+    const html = renderHtml(body, id, { preheader: fr ? 'Votre projet est prêt — aperçu à l’intérieur' : `Your project is ready — preview inside`, blocks: previews });
     const attachments = [{ filename: `${inv.number}.pdf`, content_b64: pdf.toString('base64'), contentType: 'application/pdf' }];
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Invoice ' + inv.number + ' — ' + p.name}, ${body}, ${html}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Facture ' : 'Invoice ') + inv.number + ' — ' + p.name}, ${body}, ${html}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
     const approvalId = await requestApproval(tx, {
-      actionType: 'payment.request.send', title: `Send invoice ${inv.number}: ${String(p.name).slice(0, 80)}`, requestedBy: 'project_manager',
-      reason: 'All deliverables passed independent QA. Requesting payment before releasing them.', evidence: dels.map((d) => ({ deliverable: d.title, version: d.version })),
-      expectedBenefit: `Collect ${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}.`, risk: 'Client-facing payment request.', riskLevel: 'low',
-      ifApproved: 'The payment request is sent. Deliverables are released automatically once the payment is confirmed.',
-      ifRejected: 'Nothing is sent; the invoice stays open.', entityType: 'project', entityId: projectId, taskId: ctx.task.id,
+      actionType: 'payment.request.send', title: `Valider et envoyer la facture ${inv.number} (${amount}) — ${String(p.name).slice(0, 70)}`, requestedBy: 'project_manager',
+      reason: 'Le travail est terminé et validé par deux contrôles qualité. La facture et un aperçu sont prêts à partir chez le client.', evidence: dels.map((d) => ({ livrable: d.title, version: d.version })),
+      expectedBenefit: `Encaisser ${amount}.`, risk: 'Envoi de la facture au client.', riskLevel: 'low',
+      ifApproved: 'La facture (PDF) et l’aperçu partent automatiquement depuis la boîte Gmail. Dès que tu confirmes le paiement dans Finances, les fichiers complets sont livrés.',
+      ifRejected: 'Rien n’est envoyé ; la facture reste en attente.', entityType: 'project', entityId: projectId, taskId: ctx.task.id,
       key: `payreq:${projectId}:${inv.id}`, payload: { message_id: msg.id, invoice_id: inv.id }, costMinor: 0, currency: String(inv.currency),
     });
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
@@ -339,13 +351,18 @@ export const deliverProject: Handler = async (ctx) => {
         values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Delivery: ' + p.name}) returning id`;
     const files = await Promise.all(dels.map((d, i) => deliverableFile(d, i, String(p.name))));
     const free = Number(p.budget_minor ?? 0) === 0;
-    const shortBody = free
+    const fr = await projectIsFrench(tx, projectId);
+    const n = `${dels.length} fichier${dels.length > 1 ? 's' : ''}`;
+    const shortBody = fr
+      ? (free ? `Bonjour,\n\nComme promis, vous trouverez en pièces jointes le travail complet pour « ${p.name} » (${n}), offert. Chaque livrable a été validé par deux contrôles qualité indépendants.\n\nSi un détail est à ajuster, répondez simplement à ce message.\n\nQuand vous aurez un moment, votre avis honnête nous aiderait beaucoup : une note de 1 à 5 et quelques mots sur ce qui vous a plu ou ce qui pourrait être amélioré. Nous ne publierons jamais rien sans votre accord explicite.`
+              : `Bonjour,\n\nMerci pour votre paiement. Vous trouverez en pièces jointes le travail complet pour « ${p.name} » (${n}).\n\nSi un ajustement est nécessaire dans le cadre convenu, répondez simplement à ce message.`)
+      : free
       ? `Hello,\n\nAs promised, please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}), free of charge. Each one passed two independent quality reviews.\n\nIf anything needs adjusting, just reply and we will fix it.\n\nWhen you have a moment, we would really value your honest feedback: a rating from 1 to 5 and a few words on what worked and what could be better. If you are happy for us to mention you as a reference, just say so — we will never publish anything without your explicit agreement.`
       : `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, attachments, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${'Delivery: ' + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Livraison : ' : 'Delivery: ') + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
     const approvalId = await requestApproval(tx, {
-      actionType: 'delivery.send', title: `Deliver (paid): ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
+      actionType: 'delivery.send', title: `Livraison : ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
       reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),
       riskLevel: 'low', ifApproved: 'The delivery is sent to the client.', ifRejected: 'Delivery is held.',
       entityType: 'project', entityId: projectId, taskId: ctx.task.id, key: `delivery:${projectId}:${ctx.task.id}`, payload: { message_id: msg.id },

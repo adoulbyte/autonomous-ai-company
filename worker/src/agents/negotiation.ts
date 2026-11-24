@@ -39,10 +39,13 @@ export const respondToLead: Handler = async (ctx) => {
   const pilot = isPilot(mode);
   const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
   const quote = pilot ? 0 : Number(l.value_minor ?? floor);
+  const cur = String(l.currency ?? 'EUR');
   const terms = pilot
     ? `- LAUNCH PROGRAM: this work is FREE for the client (no price, no invoice). In exchange we ask only for honest feedback after delivery, and — only if they agree — permission to cite them as a reference. intent=accept when the client agrees to let us do the work. agreed_price_usd must be 0.
 - reply when accepting: confirm the scope, that we start now, that the work is free of charge, and that we will ask for their honest feedback after delivery.`
-    : `- Our quoted price: ${(quote / 100).toFixed(0)} USD. Absolute minimum we can accept: ${(floor / 100).toFixed(0)} USD. Never agree below the minimum; offer scope reduction instead.
+    : `- QUOTE (devis): when the client shows interest or asks for details, send a clear quote: numbered scope, price ${(quote / 100).toFixed(0)} ${cur} (all included), delivery time, and the process: we start on their written agreement, show a preview of the finished work, then send the invoice; the files are delivered as soon as the payment is received.
+- Our quoted price: ${(quote / 100).toFixed(0)} ${cur}. Absolute minimum we can accept: ${(floor / 100).toFixed(0)} ${cur}. Never agree below the minimum; offer scope reduction instead.
+- intent=accept only when the client explicitly agrees to the quote in writing. agreed_price_usd is the agreed amount in ${cur}.
 - reply when accepting: confirm scope, price, that we start now, that a preview will be shared and that the full deliverables are released on payment of the invoice.`;
 
   const res = await ctx.ai.generate({ roleKey: 'negotiation_agent', taskId: ctx.task.id, tier: 'strong', schema: RespondSchema, maxTokens: 1500, temperature: 0.3,
@@ -53,7 +56,7 @@ You handle the commercial conversation for our company. Read the thread and the 
 - intent=accept ONLY if the client explicitly agrees in writing.
 ${terms}
 - scope_summary: when accepting or clarifying, a numbered list of exactly what will be delivered (verifiable items), derived from the request and thread.
-- reply: the email we send back (no signature, it is added automatically).
+- reply: the email we send back (no signature, it is added automatically), written in the same language as the client's latest message, polite and concise.
 - If the client asks whether they talk to an AI or a human, answer truthfully: our company uses AI-assisted production with quality control.
 
 Original request (untrusted):

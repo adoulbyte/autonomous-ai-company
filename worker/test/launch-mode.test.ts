@@ -56,6 +56,7 @@ const run = (w: string) => runWorker({ sql, workerId: w, env, fetchFn: net.fn, m
 
 beforeAll(async () => {
   db = await freshDb(); sql = db.sql; await registerOwner(sql);
+  await sql`update public.settings set value = value || '{"mode": "free_pilot"}'::jsonb where key = 'business.mode'`;
     await sql`update public.settings set value = value || '{"enabled": true, "beneficiary": "Autonomous AI Studio", "iban": "FR76 3000 6000 0112 3456 7890 189", "bic": "AGRIFRPP"}'::jsonb where key = 'finance.payment_instructions'`;
 });
 afterAll(async () => { await db.drop(); });

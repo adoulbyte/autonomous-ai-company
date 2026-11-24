@@ -76,7 +76,9 @@ Context (trusted): the business published this professional email address public
 What we propose (trusted): ${a.need === 'website'
     ? `a simple, modern showcase website (presentation, services, opening hours, contact, map), mobile friendly, ready in a few days. They have no website listed.`
     : `one quick, useful deliverable for their activity, chosen to fit their trade: e.g. ad scripts for social media, a flyer or menu as PDF, a price list or planning in Excel, simple visuals. They already have a website (${a.website ?? ''}).`}
-${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FREE OF CHARGE, with no obligation, in exchange for an honest review once delivered. We show a preview first.` : offerTerms}
+${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FREE OF CHARGE, with no obligation, in exchange for an honest review once delivered. We show a preview first.`
+    : `Offer (trusted): describe concretely what we would create for THIS business (e.g. the sections of their site, or 2-3 ad ideas adapted to their trade) as a short example of our approach.
+Then: free quote with no obligation on simple reply; they see a preview of the finished work before receiving the invoice; files delivered on payment. Do NOT state a price in this first email.`}
 Rules (mandatory):
 - 90-150 words, plain text, no markdown, polite ${lang === 'French' ? '"vous"' : 'tone'}. Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
 - One clear next step: reply "oui" / "yes" to start, or ask one simple question (e.g. which services to highlight).
