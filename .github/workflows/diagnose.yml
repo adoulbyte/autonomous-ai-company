@@ -1,0 +1,31 @@
+name: Diagnose
+# Read-only production health report: aggregated counts only, plus a reachability check of the command center.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/**']
+    paths: ['worker/src/tools/diagnose.ts', '.github/workflows/diagnose.yml']
+permissions: { contents: read }
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
+      - run: npm ci
+        working-directory: worker
+      - name: Command center reachability
+        run: |
+          for u in https://aic-command-center.your-subdomain.workers.dev/ https://aic-command-center.your-subdomain.workers.dev/login; do
+            curl -sS -o /tmp/page -w "$u -> HTTP %{http_code} (%{size_download} bytes, %{time_total}s)\n" "$u" || true
+          done
+          head -c 400 /tmp/page; echo
+      - name: Production database report
+        working-directory: worker
+        run: npx tsx src/tools/diagnose.ts
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
