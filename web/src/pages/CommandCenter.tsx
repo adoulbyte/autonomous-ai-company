@@ -6,6 +6,7 @@ import { Badge, Card, Empty, ErrorBox, Loading, PageHead, Stat, Table } from '..
 import { NextActions } from '../components/NextActions';
 import { ProspectingStatus } from '../components/ProspectingStatus';
 import { Funnel } from '../components/Funnel';
+import { CycleStatus } from '../components/CycleStatus';
 
 async function load() {
   const count = async (table: string, f?: (b: any) => any) => {
@@ -58,6 +59,7 @@ export function CommandCenter() {
         <Stat label="Avis clients" value={avg ? `${avg} / 5` : '—'} sub={`${data.reviews.length} avis`} />
         <Stat label="Encaissé" value={money(f.confirmed_revenue_minor, data.base)} sub={`${money(f.receivable_minor, data.base)} en attente`} />
       </div>
+      <CycleStatus />
       <ProspectingStatus />
       <Funnel />
       <Card title="Derniers e-mails envoyés" actions={<Link className="btn sm" to="/communications">Tous les e-mails</Link>}>

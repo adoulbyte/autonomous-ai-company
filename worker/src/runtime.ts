@@ -121,6 +121,12 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
   const budget = o.timeBudgetMs ?? (await getSetting<number>(o.sql, 'worker.time_budget_seconds', 420)) * 1000;
   await o.sql`insert into public.worker_heartbeats(worker_id, run_url) values (${o.workerId}, ${o.runUrl ?? null})
       on conflict (worker_id) do update set last_seen_at = now(), status = 'running'`;
+  // Cycle cadence shown on the dashboard (every 20 min when the repository is public, every 2 h when private).
+  const isPublic = (o.env ?? process.env).REPO_PRIVATE === 'false';
+  await o.sql`insert into public.settings(key, value, description) values ('worker.runtime',
+      ${o.sql.json({ public: isPublic, interval_minutes: isPublic ? 20 : 120, minute_offset: isPublic ? 0 : 23, last_started_at: new Date().toISOString() } as never)},
+      'Cycle cadence of the agents (written by the worker).')
+      on conflict (key) do update set value = excluded.value, updated_at = now()`;
   const schedule = await scheduleDueWork(o.sql, new Date(), o.workerId);
   log(`schedule: ${JSON.stringify(schedule)}`);
   const ai = new AiGateway(o.sql, o.env ?? process.env, o.fetchFn ?? fetch);
