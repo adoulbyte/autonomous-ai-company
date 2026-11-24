@@ -57,9 +57,9 @@ export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) =>
   const cities = (config.cities as [string, number, number][] | undefined) ?? DEFAULT_CITIES;
   const cursor = Number(config.cursor ?? 0) % cities.length;
   const [city, lat, lon] = cities[cursor];
-  const r = Number(config.radius_m ?? 6000);
-  const keys = '~"^(shop|craft|office|amenity|tourism|healthcare|leisure)$"~"."';
-  const q = `[out:json][timeout:50];(nwr(around:${r},${lat},${lon})["name"]["email"][${keys}];nwr(around:${r},${lat},${lon})["name"]["contact:email"][${keys}];);out tags 400;`;
+  const r = Number(config.radius_m ?? 4000);
+  // The email tag is very selective, so the query stays light; business categories are filtered in code.
+  const q = `[out:json][timeout:25];(nwr(around:${r},${lat},${lon})["email"]["name"];nwr(around:${r},${lat},${lon})["contact:email"]["name"];);out tags 300;`;
   // Public Overpass instances (official + community mirrors): try the next one when a server is overloaded.
   let data: { elements: OsmEl[] } | null = null; let lastErr: unknown = null;
   for (const host of OVERPASS_HOSTS) {

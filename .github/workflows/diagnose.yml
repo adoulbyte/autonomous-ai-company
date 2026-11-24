@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['claude/**']
-    paths: ['worker/src/tools/diagnose.ts', '.github/workflows/diagnose.yml']
+    paths: ['worker/src/tools/**', '.github/workflows/diagnose.yml']
 permissions: { contents: read }
 jobs:
   diagnose:
@@ -22,6 +22,9 @@ jobs:
             curl -sS -o /tmp/page -w "$u -> HTTP %{http_code} (%{size_download} bytes, %{time_total}s)\n" "$u" || true
           done
           head -c 400 /tmp/page; echo
+      - name: Prospecting source probe
+        working-directory: worker
+        run: npx tsx src/tools/probe-osm.ts
       - name: Production database report
         working-directory: worker
         run: npx tsx src/tools/diagnose.ts

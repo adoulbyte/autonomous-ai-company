@@ -9,7 +9,7 @@ export async function getJson<T>(url: string, opts: { headers?: Record<string, s
   if (!ALLOWED_HOSTS.has(host)) throw new PermanentError(`host not allow-listed: ${host}`);
   let res: Response;
   try {
-    res = await (opts.fetchFn ?? fetch)(url, { headers: { 'user-agent': UA, accept: 'application/json', ...(opts.headers ?? {}) }, signal: AbortSignal.timeout(host.startsWith('overpass') ? 60_000 : 20_000) });
+    res = await (opts.fetchFn ?? fetch)(url, { headers: { 'user-agent': UA, accept: 'application/json', ...(opts.headers ?? {}) }, signal: AbortSignal.timeout(host.startsWith('overpass') ? 35_000 : 20_000) });
   } catch (e) {
     throw new RetryableError(`fetch failed for ${host}: ${(e as Error).message}`);
   }
