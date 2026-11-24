@@ -112,3 +112,16 @@ describe('overpass fallback', () => {
   });
 });
 
+
+describe('fallback when OpenStreetMap is busy', () => {
+  it('uses Wikidata businesses of the same area', async () => {
+    const { osmBusinesses } = await import('../src/connectors/osm.js');
+    const f = (async (url: string) => url.startsWith('https://query.wikidata.org') ? Response.json({ results: { bindings: [
+      { item: { value: 'http://www.wikidata.org/entity/Q101' }, itemLabel: { value: 'Brasserie du Port' }, email: { value: 'mailto:contact@brasserie-port.example' }, types: { value: 'brasserie|restaurant' } },
+      { item: { value: 'http://www.wikidata.org/entity/Q102' }, itemLabel: { value: 'Mairie' }, email: { value: 'mailto:mairie@ville.example' }, types: { value: 'mairie|commune' } },
+    ] } }) : new Response('busy', { status: 502 })) as unknown as typeof fetch;
+    const items = await osmBusinesses({ config: { cursor: 0 }, maxItems: 10, env: {}, fetchFn: f });
+    expect(items.map((i) => i.buyerContact)).toEqual(['contact@brasserie-port.example']);
+    expect(items[0].url).toBe('https://www.wikidata.org/wiki/Q101');
+  });
+});

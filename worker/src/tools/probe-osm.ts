@@ -1,5 +1,6 @@
 // Prints how many contactable businesses the prospecting source finds for the first cities (no data stored).
-import { osmBusinesses } from '../connectors/osm.js';
+import { osmBusinesses, wikidataBusinesses } from '../connectors/osm.js';
+{ const t = Date.now(); try { const r = await wikidataBusinesses(45.764, 4.8357, 'fr'); console.log(`wikidata Lyon: ${r.length} businesses with a published email in ${Date.now() - t} ms`); } catch (e) { console.log(`wikidata failed after ${Date.now() - t} ms: ${(e as Error).message.slice(0, 200)}`); } }
 for (const [cursor, radius] of [[5, 1500], [6, 1500]]) {
   const t = Date.now();
   try {
@@ -10,7 +11,7 @@ for (const [cursor, radius] of [[5, 1500], [6, 1500]]) {
 }
 
 // Raw reachability of each server with a trivial query.
-for (const host of ['overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee']) {
+for (const host of ['overpass-api.de', 'overpass.openstreetmap.fr', 'overpass.kumi.systems', 'overpass.private.coffee']) {
   const t = Date.now();
   try {
     const r = await fetch(`https://${host}/api/interpreter?data=${encodeURIComponent('[out:json][timeout:10];node(1);out;')}`, { headers: { 'user-agent': 'aic-opportunity-scout/1.0 (private single-owner business system; low volume)' }, signal: AbortSignal.timeout(20000) });
