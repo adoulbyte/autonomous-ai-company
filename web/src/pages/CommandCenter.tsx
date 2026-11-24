@@ -4,6 +4,7 @@ import { useData } from '../lib/hooks';
 import { ago, money, num } from '../lib/format';
 import { Badge, Card, Empty, ErrorBox, Loading, PageHead, Stat, Table } from '../components/ui';
 import { NextActions } from '../components/NextActions';
+import { ProspectingStatus } from '../components/ProspectingStatus';
 
 async function load() {
   const count = async (table: string, f?: (b: any) => any) => {
@@ -54,6 +55,7 @@ export function CommandCenter() {
         <Stat label="Avis clients" value={avg ? `${avg} / 5` : '—'} sub={`${data.reviews.length} avis`} />
         <Stat label="Encaissé" value={money(f.confirmed_revenue_minor, data.base)} sub={`${money(f.receivable_minor, data.base)} en attente`} />
       </div>
+      <ProspectingStatus />
       <Card title="Derniers e-mails envoyés" actions={<Link className="btn sm" to="/communications">Tous les e-mails</Link>}>
         <Table rows={data.sent} cols={[
           { key: 'sent_at', label: 'Quand', render: (r) => <span className="muted">{ago(r.sent_at)}</span> },

@@ -76,11 +76,17 @@ export function toProspect(el: OsmEl, city: string): RawOpportunity | null {
   };
 }
 
-export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) => {
+/** The area explored for a given cursor: every city centre and 4 neighbourhoods, in rotation. */
+export function areaAt(config: Record<string, unknown>) {
   const cities = (config.cities as [string, number, number][] | undefined) ?? DEFAULT_CITIES;
   const areas = cities.flatMap(([name, la, lo]) => AREA_OFFSETS.map(([dy, dx]) => [name, la + dy, lo + dx] as [string, number, number]));
   const cursor = Number(config.cursor ?? 0) % areas.length;
   const [city, lat, lon] = areas[cursor];
+  return { cursor, city, lat, lon, total: areas.length, cities: cities.length };
+}
+
+export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) => {
+  const { cursor, city, lat, lon } = areaAt(config);
   const r = Number(config.radius_m ?? 1500);
   // Small areas keep each Overpass query light (the public servers reject heavy queries when busy).
   let elements: OsmEl[] | null = null; const errors: string[] = [];

@@ -8,6 +8,7 @@ import { clamp01, detectInjection, normalizeForFingerprint, sha256, untrusted } 
 import { enqueue } from '../queue.js';
 import { getSetting, logEvent, type Sql, type Tx } from '../db.js';
 import type { RawOpportunity } from '../connectors/types.js';
+import { areaAt } from '../connectors/osm.js';
 import { scoreOpportunity, type ScoringRules, type ScoringWeights } from '../scoring.js';
 import { getMode, isPilot } from '../mode.js';
 
@@ -38,7 +39,12 @@ export function dailyProspectCap(p: ProspectingPolicy, now = new Date()): number
 }
 
 async function advanceCursor(sql: Sql | Tx, key: string) {
-  await sql`update public.sources set config = jsonb_set(config, '{cursor}', to_jsonb(coalesce((config->>'cursor')::int, 0) + 1)) where key = ${key}`;
+  const [src] = await sql`select config from public.sources where key = ${key}`;
+  const cfg = (src?.config ?? {}) as Record<string, unknown>;
+  const done = areaAt(cfg); const next = areaAt({ ...cfg, cursor: done.cursor + 1 });
+  // Progress shown on the dashboard: area just explored, next one, coverage.
+  await sql`update public.sources set config = config || ${sql.json({ cursor: done.cursor + 1, last_city: done.city, next_city: next.city,
+      areas_total: done.total, cities_total: done.cities } as never)} where key = ${key}`;
 }
 
 const NEED_LABEL: Record<string, string> = {
