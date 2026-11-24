@@ -6,6 +6,8 @@ export interface OutgoingMail {
   from: string; to: string; subject: string; text: string; html?: string;
   inReplyTo?: string | null; references?: string[];
   attachments?: { filename: string; content: string | Buffer; contentType?: string; cid?: string }[];
+  /** List-Unsubscribe header (mailto), required by Gmail/Yahoo for bulk senders and a strong deliverability signal. */
+  listUnsubscribe?: string;
 }
 export interface IncomingMail {
   uid: number; messageId: string | null; inReplyTo: string | null; references: string[];
@@ -29,6 +31,7 @@ export function gmailTransport(env: NodeJS.ProcessEnv = process.env): MailTransp
         from: m.from, to: m.to, subject: m.subject, text: m.text, html: m.html,
         inReplyTo: m.inReplyTo ?? undefined, references: m.references?.length ? m.references : undefined,
         attachments: m.attachments,
+        list: m.listUnsubscribe ? { unsubscribe: m.listUnsubscribe } : undefined,
       });
       return { messageId: info.messageId };
     },

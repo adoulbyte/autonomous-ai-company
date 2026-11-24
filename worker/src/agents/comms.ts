@@ -9,17 +9,29 @@ export async function identity(sql: Sql): Promise<Identity> {
   return getSetting<Identity>(sql, 'business.identity', { company_name: 'Autonomous AI Studio', sender_name: 'Autonomous AI Studio', tagline: '', website: '', signature: 'Autonomous AI Studio', ai_disclosure: 'Prepared with AI assistance.' });
 }
 
-/** Short, polite follow-ups; the last one says clearly that we will not write again. */
-export function followUpBody(n: number, max: number, title: string, fr: boolean): string {
-  const last = n >= max;
-  if (fr) return last
-    ? `Bonjour,\n\nUn dernier petit message au sujet de notre proposition (« ${title} »). Si le sujet vous intéresse, il suffit de répondre « oui » et nous nous occupons de tout. Sinon, aucun souci : nous ne vous écrirons plus.\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.`
-    : n === 1
-      ? `Bonjour,\n\nJe me permets de revenir vers vous au sujet de mon précédent message (« ${title} »). Nous pouvons commencer dès maintenant et vous montrer un aperçu avant toute décision. Souhaitez-vous que nous lancions ?\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.`
-      : `Bonjour,\n\nPetit rappel concernant notre proposition (« ${title} »). Avez-vous eu le temps d'y jeter un œil ? Une simple réponse « oui » suffit pour démarrer, ou dites-nous ce que vous aimeriez mettre en avant.\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.`;
-  return last
-    ? `Hello,\n\nA last short note about "${title}": if the need is still open, simply reply and we will take it from there. Otherwise, no worries — we will not follow up again.\n\nIf you prefer not to hear from us again, just reply STOP.`
-    : `Hello,\n\nI wanted to make sure my previous message reached you about "${title}". We can start right away and share a preview first.\n\nWould you like us to go ahead?\n\nIf you prefer not to hear from us again, just reply STOP.`;
+/** Short, polite follow-ups in the prospect's language; the last one says clearly that we will not write again. */
+const FOLLOW_UPS: Record<string, { first: string; middle: string; last: string; stop: string }> = {
+  fr: { first: 'Bonjour,\n\nJe me permets de revenir vers vous au sujet de mon précédent message (« {t} »). Nous pouvons vous montrer un aperçu avant toute décision. Souhaitez-vous en savoir plus ?',
+        middle: 'Bonjour,\n\nPetit rappel concernant notre proposition (« {t} »). Une simple réponse suffit pour recevoir un devis sans engagement.',
+        last: 'Bonjour,\n\nUn dernier petit message au sujet de notre proposition (« {t} »). Si le sujet vous intéresse, il suffit de répondre. Sinon, aucun souci : nous ne vous écrirons plus.',
+        stop: 'Si vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.' },
+  en: { first: 'Hello,\n\nI wanted to make sure my previous message reached you ("{t}"). We can show you a preview before any decision. Would you like to know more?',
+        middle: 'Hello,\n\nA short reminder about our proposal ("{t}"). A simple reply is enough to receive a no-obligation quote.',
+        last: 'Hello,\n\nA last short note about "{t}": if it is of interest, just reply. Otherwise, no worries — we will not write again.',
+        stop: 'If you prefer not to hear from us again, just reply STOP.' },
+  nl: { first: 'Goedendag,\n\nIk wilde even nagaan of mijn vorige bericht ("{t}") is aangekomen. We kunnen u vooraf een voorbeeld laten zien. Wilt u meer weten?',
+        middle: 'Goedendag,\n\nEen korte herinnering aan ons voorstel ("{t}"). Een eenvoudig antwoord is voldoende voor een vrijblijvende offerte.',
+        last: 'Goedendag,\n\nEen laatste kort bericht over "{t}": als het u interesseert, antwoord dan gewoon. Zo niet, geen probleem — we schrijven u niet meer.',
+        stop: 'Wilt u geen berichten meer van ons ontvangen? Antwoord dan gewoon STOP.' },
+  pt: { first: 'Olá,\n\nQueria confirmar se a minha mensagem anterior ("{t}") chegou. Podemos mostrar-lhe uma pré-visualização antes de qualquer decisão. Gostaria de saber mais?',
+        middle: 'Olá,\n\nUm breve lembrete sobre a nossa proposta ("{t}"). Basta responder para receber um orçamento sem compromisso.',
+        last: 'Olá,\n\nUma última mensagem sobre "{t}": se tiver interesse, basta responder. Caso contrário, não voltaremos a escrever.',
+        stop: 'Se preferir não receber mais mensagens nossas, basta responder STOP.' },
+};
+export function followUpBody(n: number, max: number, title: string, language = 'en'): string {
+  const f = FOLLOW_UPS[language] ?? FOLLOW_UPS.en;
+  const body = (n >= max ? f.last : n === 1 ? f.first : f.middle).replace('{t}', title);
+  return `${body}\n\n${f.stop}`;
 }
 
 /** comms.send — send every approved outbound email (policy-approved or owner-approved), within daily caps. */
@@ -32,7 +44,8 @@ export const sendOutbox: Handler = async (ctx) => {
       where m.direction = 'outbound' and m.status = 'approved' and m.to_addr ~* '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$' and m.send_attempts < 5
       order by m.created_at limit ${budget}`;
   const id = await identity(ctx.sql);
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, sentOutreach = 0;
+  const pacing = ctx.env.GITHUB_ACTIONS === 'true';
   for (const m of queue) {
     if (/(mailer-daemon|postmaster|no-?reply)@/i.test(String(m.to_addr))) { await ctx.sql`update public.messages set status = 'rejected', last_error = 'automated address: never answered' where id = ${m.id}`; continue; }
     const dnc = await ctx.sql`select 1 from public.contacts where lower(email) = lower(${m.to_addr}) and do_not_contact`;
@@ -42,10 +55,15 @@ export const sendOutbox: Handler = async (ctx) => {
     try {
       const attachments = ((m.attachments as { filename: string; content_b64: string; contentType?: string }[]) ?? [])
         .map((a) => ({ filename: a.filename, content: Buffer.from(a.content_b64, 'base64'), contentType: a.contentType }));
-      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? '') });
+      const prospecting = /^(outreach|followup):/.test(String(m.idempotency_key ?? ''));
+      if (prospecting && sentOutreach > 0 && pacing) await new Promise((r) => setTimeout(r, 6000 + Math.random() * 9000));   // human-like pace
+      if (prospecting && sentOutreach >= 12) continue;   // at most 12 prospecting emails per run; the rest go next cycle
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), personal: prospecting });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
-        text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments });
+        text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments,
+        listUnsubscribe: `mailto:${ctx.mail.address}?subject=STOP` });
+      if (prospecting) sentOutreach++;
       await ctx.sql.begin(async (tx) => {
         await tx`select set_config('app.actor', 'agent:mail_clerk', true)`;
         await tx`update public.messages set status = 'sent', sent_at = now(), email_message_id = ${r.messageId}, from_addr = ${ctx.mail!.address}, send_attempts = send_attempts + 1 where id = ${m.id}`;
@@ -106,8 +124,8 @@ export const followUp: Handler = async (ctx) => {
   if (!conv) return finish(ctx, async () => ({ skipped: 'no conversation' }));
   const n = Number(l.follow_ups_sent) + 1;
   const [o] = await ctx.sql`select o.analysis from public.opportunities o where o.id = ${l.opportunity_id}`;
-  const fr = (o?.analysis as { language?: string } | null)?.language === 'fr';
-  const body = followUpBody(n, policy.max_followups, String(l.title), fr);
+  const language = (o?.analysis as { language?: string } | null)?.language ?? 'en';
+  const body = followUpBody(n, policy.max_followups, String(l.title), language);
   return finish(ctx, async (tx) => {
     const [approval] = await tx`select public.request_approval(p_action_type => 'message.send', p_title => ${'Follow-up #' + n + ': ' + String(l.title).slice(0, 80)},
         p_requested_by => 'sales_agent', p_reason => 'No reply after the follow-up delay', p_if_approved => 'Follow-up is emailed', p_if_rejected => 'No follow-up',

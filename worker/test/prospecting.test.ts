@@ -32,7 +32,7 @@ const OSM: { elements: { type: string; id: number; tags: Record<string, string> 
 ] };
 
 const ai: Responder = (prompt) => {
-  if (prompt.includes('B2B prospecting')) return { body: { subject: 'Un site web offert pour votre commerce',
+  if (prompt.includes('B2B prospecting')) return { body: { subject: 'Votre site web à Lyon',
     body: 'Bonjour,\n\nNous avons vu votre adresse professionnelle sur votre fiche publique. Nous lançons notre studio et proposons de créer gratuitement un site vitrine simple et moderne pour votre commerce, en échange d\'un avis honnête. Vous verrez un aperçu avant toute décision.\n\nSouhaitez-vous que nous commencions ? Répondez simplement « oui ».\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.',
     claims_made: [], questions_for_buyer: [] } };
   if (prompt.includes('Review this outreach email')) return { body: { score: 9, issues: [], verdict: 'send' } };
@@ -64,8 +64,8 @@ describe('prospect selection', () => {
     expect(dailyProspectCap(p, new Date('2026-03-01T12:00:00Z'))).toBe(120);
   });
   it('follow-ups are in French, polite, and always offer an opt-out', () => {
-    expect(followUpBody(1, 3, 'Site vitrine', true)).toMatch(/Bonjour[\s\S]*STOP/);
-    expect(followUpBody(3, 3, 'Site vitrine', true)).toMatch(/nous ne vous écrirons plus/);
+    expect(followUpBody(1, 3, 'Site vitrine', 'fr')).toMatch(/Bonjour[\s\S]*STOP/);
+    expect(followUpBody(3, 3, 'Site vitrine', 'fr')).toMatch(/nous ne vous écrirons plus/);
   });
 });
 

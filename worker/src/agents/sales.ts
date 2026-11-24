@@ -23,6 +23,16 @@ const FORBIDDEN = [
   /\bguarantee(d)? (results|success|ranking)/i, /\b(as|I am) a (senior|human) (developer|engineer|consultant)\b/i,
   /\baward[- ]winning\b/i, /\btrusted by\b/i, /\blimited time\b/i, /\bact now\b/i,
 ];
+/** Classic spam-filter triggers in a cold email (subject words, links, shouting). */
+export function spamSignals(subject: string, body: string): string[] {
+  const v: string[] = [];
+  if (/\b(free|gratuit|gratuite|offert|offerte|gratis|promo|discount|urgent|winner|100 ?%)\b|[€$%!]/i.test(subject)) v.push('spam-trigger word or symbol in the subject');
+  if (subject.length > 70 || /[A-Z]{5,}/.test(subject)) v.push('subject too long or shouting');
+  if (/https?:\/\/|www\./i.test(body)) v.push('links in a first-contact email');
+  if ((body.match(/!/g) ?? []).length > 1) v.push('exclamation marks');
+  return v;
+}
+
 export function outreachViolations(body: string, disclosure: string): string[] {
   const v = FORBIDDEN.filter((p) => p.test(body)).map((p) => `forbidden claim pattern ${p}`);
   if (disclosure && !body.includes(disclosure.slice(0, 30))) v.push('missing AI-assistance disclosure');
@@ -67,7 +77,9 @@ ${untrusted(`buyer-request ${evidence[0]?.url ?? lead.opp_url}`, String(evidence
 
   const a = (lead.analysis ?? {}) as { prospect?: boolean; need?: string; language?: string; category?: string; city?: string; website?: string | null };
   const isProspect = a.prospect === true;
-  const lang = a.language === 'fr' ? 'French' : 'English';
+  const lang = ({ fr: 'French', en: 'English', nl: 'Dutch', pt: 'Portuguese' } as Record<string, string>)[a.language ?? 'fr'] ?? 'English';
+  const optOut = ({ French: 'Si vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.', English: 'If you prefer not to hear from us again, just reply STOP.',
+    Dutch: 'Wilt u geen berichten meer van ons ontvangen? Antwoord dan gewoon STOP.', Portuguese: 'Se preferir não receber mais mensagens nossas, basta responder STOP.' } as Record<string, string>)[lang];
   const prospectPrompt = `${skillsFor('sales')}
 
 Write a short, warm, professional first email (B2B prospecting) to a local business that we have never spoken to. Language: ${lang}.
@@ -80,10 +92,12 @@ ${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FRE
     : `Offer (trusted): describe concretely what we would create for THIS business (e.g. the sections of their site, or 2-3 ad ideas adapted to their trade) as a short example of our approach.
 Then: free quote with no obligation on simple reply; they see a preview of the finished work before receiving the invoice; files delivered on payment. Do NOT state a price in this first email.`}
 Rules (mandatory):
-- 90-150 words, plain text, no markdown, polite ${lang === 'French' ? '"vous"' : 'tone'}. Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
+- 90-150 words, plain text, no markdown, polite (${lang === 'French' ? '"vous"' : lang === 'Dutch' ? '"u"' : 'formal'}). Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
 - One clear next step: reply "oui" / "yes" to start, or ask one simple question (e.g. which services to highlight).
 - Honest only: no years of experience, past clients, testimonials, awards or portfolio. Do NOT pretend to be a human individual.
-- No pressure or urgency. End the body with one opt-out sentence: ${lang === 'French' ? '"Si vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP."' : '"If you prefer not to hear from us again, just reply STOP."'}
+- No pressure or urgency. End the body with this exact opt-out sentence: "${optOut}"
+- Deliverability (mandatory): no links, no attachments, no prices, no ALL CAPS, no exclamation marks, no emojis; the subject is short (max 7 words), natural and
+  personal, and must NOT contain words like free/gratuit/offert/gratis/promo/offer/discount/urgent/%/€.
 - claims_made lists every factual claim you make about our company.
 
 Our company (trusted): ${JSON.stringify({ name: profile.name, positioning: profile.positioning })}
@@ -111,6 +125,7 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
   }
   const body = res.data.body.trim();   // signature + AI disclosure are appended by the email template
   const violations = outreachViolations(`${body}\n${profile.disclosure}`, profile.disclosure);
+  if (isProspect) violations.push(...spamSignals(res.data.subject, body));
   if (violations.length) throw new Error(`draft rejected by compliance gate: ${violations.join('; ')}`); // retryable: new draft
   const to = lead.contact_email ?? lead.contact_handle ?? lead.opp_url;
 
@@ -175,7 +190,7 @@ export const triageMessage: Handler = async (ctx) => {
     return { automated: auto };
   });
   // A plain STOP / unsubscribe reply is always honoured, without depending on any AI model.
-  const optOut = /^\s*(stop|unsubscribe|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir))/i.test(String(m.body));
+  const optOut = /^\s*(stop|unsubscribe|remove me|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir)|afmelden|uitschrijven|cancelar|remover|n[ãa]o quero)/i.test(String(m.body));
   const res = optOut
     ? { model: 'rule:opt-out', data: { category: 'prospect_reply', intent: 'unsubscribe', priority: 'normal', summary: 'Opt-out request (STOP)', reply_draft: null } as z.infer<typeof TriageSchema> }
     : await ctx.ai.generate({ roleKey: 'communications', taskId: ctx.task.id, tier: 'fast', allowDowngrade: true, schema: TriageSchema,

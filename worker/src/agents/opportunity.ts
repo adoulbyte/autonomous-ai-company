@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promises as dns } from 'node:dns';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { CONNECTORS } from '../connectors/index.js';
@@ -52,12 +53,30 @@ const NEED_LABEL: Record<string, string> = {
   marketing: 'Already has a website: offer quick wins such as ad scripts/scenarios for social media, flyers or menus as PDF, price lists or planning in Excel, simple visuals.',
 };
 
+const mxCache = new Map<string, Promise<boolean>>();
+/** True when the domain has a mail server (MX record, or an A record as the SMTP fallback). */
+export function domainReceivesMail(domain: string): Promise<boolean> {
+  if (!mxCache.has(domain)) mxCache.set(domain, (async () => {
+    const timeout = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, ko) => setTimeout(() => ko(new Error('dns timeout')), 4000))]);
+    try { if ((await timeout(dns.resolveMx(domain))).length) return true; } catch { /* try A */ }
+    try { return (await timeout(dns.resolve4(domain))).length > 0; } catch { return false; }
+  })());
+  return mxCache.get(domain)!;
+}
+
 const prospectFromDirectory = async (ctx: Parameters<Handler>[0], key: string, sourceName: string, found: RawOpportunity[]) => {
   let items = found;
   const policy = await getSetting<ProspectingPolicy>(ctx.sql, 'prospecting.policy', { start_per_day: 20, step_per_day: 10, max_per_day: 120, started_at: new Date().toISOString() });
   // Businesses that only list a website: look up the contact address published on their own site (bounded in time).
   const enriched = await enrichContacts(items.filter((i) => !i.buyerContact), { env: ctx.env, fetchFn: ctx.fetchFn, budgetMs: 60_000 });
   items = items.filter((i) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(i.buyerContact ?? '')));
+  // Never write to a domain that cannot receive email: bounces hurt the mailbox reputation (and land the next emails in spam).
+  let noMx = 0;
+  if (ctx.env.GITHUB_ACTIONS === 'true') {
+    const ok = await Promise.all(items.map((i) => domainReceivesMail(String(i.buyerContact).split('@')[1])));
+    noMx = ok.filter((x) => !x).length;
+    items = items.filter((_, k) => ok[k]);
+  }
   return finish(ctx, async (tx) => {
     const [{ n: today }] = await tx`select count(*)::int as n from public.leads l join public.sources s on s.key = l.source
         where s.kind = 'directory' and l.created_at >= date_trunc('day', now())`;
@@ -91,9 +110,9 @@ const prospectFromDirectory = async (ctx: Parameters<Handler>[0], key: string, s
     await advanceCursor(tx, key);
     await tx`update public.sources set last_run_at = now(), health = 'healthy', consecutive_failures = 0, last_error = null,
         items_found_total = items_found_total + ${created} where key = ${key}`;
-    await logEvent(tx, 'source', key, 'discovery_completed', `${sourceName}: ${found.length} businesses (${enriched} emails found on their websites), ${created} new, ${pursued} contacted today, ${kept} kept for the next days`,
-      { found: found.length, enriched, created, duplicates, pursued, kept });
-    return { found: found.length, enriched, created, duplicates, pursued, kept, city: found[0]?.raw.city ?? null };
+    await logEvent(tx, 'source', key, 'discovery_completed', `${sourceName}: ${found.length} businesses (${enriched} emails found on their websites, ${noMx} without mail server), ${created} new, ${pursued} contacted today, ${kept} kept for the next days`,
+      { found: found.length, enriched, no_mail_server: noMx, created, duplicates, pursued, kept });
+    return { found: found.length, enriched, no_mail_server: noMx, created, duplicates, pursued, kept, city: found[0]?.raw.city ?? null };
   });
 };
 

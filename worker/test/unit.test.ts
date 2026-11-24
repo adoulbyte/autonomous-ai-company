@@ -258,3 +258,25 @@ describe('automated emails', () => {
     expect(classifyAutomated('contact@boulangerie.fr', 'Re: Votre site web', 'Oui ça nous intéresse')).toBeNull();
   });
 });
+
+import { spamSignals } from '../src/agents/sales.js';
+import { followUpBody } from '../src/agents/comms.js';
+import { citiesFor } from '../src/connectors/osm.js';
+describe('deliverability and international prospecting', () => {
+  it('flags classic spam triggers in a cold email', () => {
+    expect(spamSignals('Site web GRATUIT !!!', 'Bonjour')).not.toHaveLength(0);
+    expect(spamSignals('Votre site web à Lyon', 'Voir https://x.fr')).toContain('links in a first-contact email');
+    expect(spamSignals('Une idée pour votre boulangerie', 'Bonjour, ...')).toHaveLength(0);
+  });
+  it('follows up in the prospect language with an opt-out', () => {
+    expect(followUpBody(1, 3, 'Website', 'nl')).toMatch(/Goedendag[\s\S]*STOP/);
+    expect(followUpBody(3, 3, 'Website', 'pt')).toMatch(/Olá[\s\S]*STOP/);
+  });
+  it('rotates through French-speaking and international cities, never in consent-only countries', () => {
+    const cities = citiesFor({});
+    expect(cities.some((c) => c[3] === 'GB')).toBe(true);
+    expect(cities.some((c) => ['DE', 'AT', 'CH', 'ES', 'IT'].includes(String(c[3])))).toBe(false);
+    expect(cities.some((c) => c[3] === 'US')).toBe(false);
+    expect(citiesFor({ include_us: true }).some((c) => c[3] === 'US')).toBe(true);
+  });
+});
