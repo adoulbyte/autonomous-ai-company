@@ -22,35 +22,10 @@ export const DEFAULT_CITIES: [string, number, number][] = [
 
 const PUBLIC_OR_UNSUITABLE = /^(townhall|school|college|university|kindergarten|place_of_worship|police|fire_station|hospital|clinic|courthouse|prison|post_office|library|social_facility|community_centre|bank|atm|fuel|parking|public_bookcase|grave_yard|government|political_party|religion|diplomatic|charging_station|vending_machine)$/;
 
+/** City centre + four neighbourhoods around it (~2.5 km away). */
+export const AREA_OFFSETS: [number, number][] = [[0, 0], [0.022, 0], [-0.022, 0], [0, 0.032], [0, -0.032]];
+
 export const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee'];
-
-const QLEVER = 'https://qlever.cs.uni-freiburg.de/api/osm-planet';
-const TAGS = ['name', 'email', 'contact:email', 'shop', 'craft', 'office', 'amenity', 'tourism', 'healthcare', 'leisure', 'website', 'contact:website',
-  'brand', 'brand:wikidata', 'operator', 'addr:street', 'addr:housenumber', 'addr:postcode', 'addr:city', 'opening_hours', 'description'];
-
-/** Businesses of one city (addr:city) that publish an email, from the OSM planet via QLever (SPARQL). */
-export async function qleverBusinesses(city: string, limit: number, fetchFn?: typeof fetch): Promise<OsmEl[]> {
-  const v = (t: string) => `?t_${t.replace(/[^a-z]/gi, '_')}`;
-  const optionals = TAGS.filter((t) => t !== 'name' && t !== 'addr:city').map((t) => `OPTIONAL { ?osm osmkey:${t} ${v(t)} . }`).join('\n');
-  const query = `PREFIX osmkey: <https://www.openstreetmap.org/wiki/Key:>
-SELECT ?osm ${TAGS.filter((t) => t !== 'addr:city').map(v).join(' ')} WHERE {
-  ?osm osmkey:addr:city ${JSON.stringify(city)} .
-  ?osm osmkey:name ${v('name')} .
-  { ?osm osmkey:email ?any_email . } UNION { ?osm osmkey:contact:email ?any_email . }
-  ${optionals}
-} LIMIT ${Math.min(limit, 1000)}`;
-  const res = await getJson<{ results: { bindings: Record<string, { value: string }>[] } }>(`${QLEVER}?query=${encodeURIComponent(query)}`,
-    { fetchFn, headers: { accept: 'application/sparql-results+json' } });
-  const out = new Map<string, OsmEl>();
-  for (const b of res.results.bindings) {
-    const iri = b.osm?.value ?? ''; const m = iri.match(/openstreetmap\.org\/(node|way|relation)\/(\d+)/);
-    if (!m || out.has(iri)) continue;
-    const tags: Record<string, string> = { 'addr:city': city };
-    for (const t of TAGS) { const x = b[v(t).slice(1)]; if (x?.value) tags[t] = x.value; }
-    out.set(iri, { type: m[1], id: Number(m[2]), tags });
-  }
-  return [...out.values()];
-}
 
 interface OsmEl { type: string; id: number; tags?: Record<string, string> }
 
@@ -84,21 +59,18 @@ export function toProspect(el: OsmEl, city: string): RawOpportunity | null {
 
 export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) => {
   const cities = (config.cities as [string, number, number][] | undefined) ?? DEFAULT_CITIES;
-  const cursor = Number(config.cursor ?? 0) % cities.length;
-  const [city, lat, lon] = cities[cursor];
-  const r = Number(config.radius_m ?? 4000);
-  // Primary: QLever SPARQL endpoint over the OpenStreetMap planet (University of Freiburg, public). Fallback: Overpass.
+  const areas = cities.flatMap(([name, la, lo]) => AREA_OFFSETS.map(([dy, dx]) => [name, la + dy, lo + dx] as [string, number, number]));
+  const cursor = Number(config.cursor ?? 0) % areas.length;
+  const [city, lat, lon] = areas[cursor];
+  const r = Number(config.radius_m ?? 1500);
+  // Small areas keep each Overpass query light (the public servers reject heavy queries when busy).
   let elements: OsmEl[] | null = null; const errors: string[] = [];
-  try { elements = await qleverBusinesses(city, Number(config.limit ?? 400), fetchFn); }
-  catch (e) { errors.push(`qlever: ${(e as Error).message.slice(0, 160)}`); }
-  if (!elements) {
-    const q = `[out:json][timeout:25];(nwr(around:${r},${lat},${lon})["email"]["name"];nwr(around:${r},${lat},${lon})["contact:email"]["name"];);out tags 300;`;
-    for (const host of OVERPASS_HOSTS) {
-      try { elements = (await getJson<{ elements: OsmEl[] }>(`https://${host}/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn })).elements ?? []; break; }
-      catch (e) { errors.push((e as Error).message.slice(0, 160)); }
-    }
+  const q = `[out:json][timeout:25];(nwr(around:${r},${lat},${lon})["email"]["name"];nwr(around:${r},${lat},${lon})["contact:email"]["name"];);out tags 300;`;
+  for (const host of OVERPASS_HOSTS) {
+    try { elements = (await getJson<{ elements: OsmEl[] }>(`https://${host}/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn })).elements ?? []; break; }
+    catch (e) { errors.push((e as Error).message.slice(0, 160)); }
   }
-  if (!elements) throw new RetryableError(`all OpenStreetMap services failed: ${errors.join(' | ')}`);
+  if (!elements) throw new RetryableError(`all OpenStreetMap servers busy: ${errors.join(' | ')}`);
   const data = { elements };
   const seen = new Set<string>();
   const out: RawOpportunity[] = [];
