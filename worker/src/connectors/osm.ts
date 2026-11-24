@@ -80,11 +80,12 @@ const PUBLIC_OR_UNSUITABLE = /^(townhall|school|college|university|kindergarten|
 const WIKIDATA_BUSINESS = /(restaurant|brasserie|bistro|café|cafe|coffee|bar\b|pub\b|hôtel|hotel|auberge|boulangerie|bakery|pâtisserie|patisserie|magasin|boutique|shop|store|librairie|bookshop|fleuriste|florist|coiffure|hairdresser|salon|garage|winery|vineyard|domaine|cave|épicerie|grocery|traiteur|caterer|camping|gîte|guest house|chambre d'hôtes|spa|fitness|gym|école de conduite|driving school|agence|agency|cabinet|studio|atelier|workshop|galerie|gallery|chocolat|fromagerie|cheese|boucherie|butcher|opticien|optician|pharmac)/i;
 const NOT_A_PROSPECT = /(commune|municipal|mairie|city hall|université|university|école|school|lycée|collège|musée|museum|église|church|cathédrale|hôpital|hospital|gouvernement|government|ministère|ministry|parti politique|political party|association|fondation|foundation)/i;
 
-/** Wikidata (CC0 open data) fallback: items within 3 km that publish an email (P968). */
+/** Wikidata (CC0 open data) fallback: businesses within 3 km that publish an email (P968) or an official website (P856). */
 export async function wikidataBusinesses(lat: number, lon: number, language: string, fetchFn?: typeof fetch): Promise<OsmEl[]> {
   const query = `SELECT ?item ?itemLabel ?email ?website (GROUP_CONCAT(DISTINCT ?typeLabel; separator="|") AS ?types) WHERE {
   SERVICE wikibase:around { ?item wdt:P625 ?loc . bd:serviceParam wikibase:center "Point(${lon} ${lat})"^^geo:wktLiteral . bd:serviceParam wikibase:radius "3" . }
-  ?item wdt:P968 ?email .
+  { ?item wdt:P968 ?email . } UNION { ?item wdt:P856 ?website . }
+  OPTIONAL { ?item wdt:P968 ?email . }
   OPTIONAL { ?item wdt:P856 ?website . }
   OPTIONAL { ?item wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(lang(?typeLabel) IN ("fr", "en")) }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "${language},fr,en". }
@@ -98,8 +99,8 @@ export async function wikidataBusinesses(lat: number, lon: number, language: str
     const id = Number((b.item?.value ?? '').replace(/^.*\/Q/, ''));
     const email = (b.email?.value ?? '').replace(/^mailto:/i, '');
     const kind = (types.split('|').find((t) => WIKIDATA_BUSINESS.test(t)) ?? 'business').toLowerCase().replace(/\s+/g, '_');
-    if (!id || !email) continue;
-    out.push({ type: 'wikidata', id, tags: { name: b.itemLabel?.value ?? '', email, ...(b.website?.value ? { website: b.website.value } : {}), shop: kind } });
+    if (!id || (!email && !b.website?.value)) continue;   // website only: the contact address is looked up on the business's own site
+    out.push({ type: 'wikidata', id, tags: { name: b.itemLabel?.value ?? '', ...(email ? { email } : {}), ...(b.website?.value ? { website: b.website.value } : {}), shop: kind } });
   }
   return out;
 }
@@ -156,8 +157,7 @@ export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) =>
   // Small areas keep each Overpass query light (the public servers reject heavy queries when busy).
   let elements: OsmEl[] | null = null; const errors: string[] = [];
   const q = `[out:json][timeout:25];(nwr(around:${r},${lat},${lon})["email"]["name"];nwr(around:${r},${lat},${lon})["contact:email"]["name"];nwr(around:${r},${lat},${lon})["website"]["name"]["shop"];nwr(around:${r},${lat},${lon})["website"]["name"]["craft"];nwr(around:${r},${lat},${lon})["website"]["name"]["amenity"~"restaurant|cafe|bar|fast_food|pub|dentist|doctors|veterinary|driving_school"];);out tags 400;`;
-  const hosts = country === 'FR' ? [...OVERPASS_HOSTS.slice(0, 1), 'overpass.openstreetmap.fr', ...OVERPASS_HOSTS.slice(1)] : OVERPASS_HOSTS;
-  for (const host of hosts) {
+  for (const host of OVERPASS_HOSTS) {
     try { elements = (await getJson<{ elements: OsmEl[] }>(`https://${host}/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn })).elements ?? []; break; }
     catch (e) { errors.push((e as Error).message.slice(0, 160)); }
   }

@@ -220,8 +220,8 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
     } else if (m.project_status && ['delivered', 'accepted', 'revision', 'ready_for_delivery'].includes(m.project_status) && d.category !== 'spam') {
       await enqueue(tx, { type: 'feedback.capture', key: `feedback:${id}`, role: 'customer_success', entityType: 'project', entityId: String(m.project_id),
         input: { message_id: id, project_id: m.project_id }, priority: 84, title: `Client feedback: ${String(m.subject ?? '').slice(0, 70)}` });
-    } else if (m.lead_id && d.category !== 'spam' && d.intent !== 'not_applicable' && ['prospect_reply', 'client', 'opportunity', 'billing'].includes(d.category)) {
-      // Only a real reply from the prospect reaches the Negotiation Agent (the triage verdict decides).
+    } else if (m.lead_id && d.category !== 'spam') {
+      // A human reply from a prospect always reaches the Negotiation Agent (machine messages were filtered out above).
       if (d.intent === 'unsubscribe') {
         await tx`update public.contacts set do_not_contact = true where id = (select contact_id from public.leads where id = ${m.lead_id})`;
         const [lead] = await tx`select stage from public.leads where id = ${m.lead_id}`;

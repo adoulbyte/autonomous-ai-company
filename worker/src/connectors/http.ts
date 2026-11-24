@@ -1,7 +1,7 @@
 import { RetryableError, PermanentError } from '../errors.js';
 
 /** Only official public APIs registered as sources may be fetched by connectors. */
-export const ALLOWED_HOSTS = new Set(['hn.algolia.com', 'api.github.com', 'models.github.ai', 'remotive.com', 'weworkremotely.com', 'overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee', 'overpass.openstreetmap.fr', 'query.wikidata.org']);
+export const ALLOWED_HOSTS = new Set(['hn.algolia.com', 'api.github.com', 'models.github.ai', 'remotive.com', 'weworkremotely.com', 'overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee', 'query.wikidata.org']);
 const UA = 'aic-opportunity-scout/1.0 (private single-owner business system; low volume)';
 
 export async function getJson<T>(url: string, opts: { headers?: Record<string, string>; fetchFn?: typeof fetch } = {}): Promise<T> {

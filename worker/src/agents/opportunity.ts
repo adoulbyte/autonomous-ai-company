@@ -135,7 +135,7 @@ export const runSource: Handler = async (ctx) => {
   try {
     items = await connector({ config: source.config as Record<string, unknown>, maxItems: source.max_items_per_run as number, env: ctx.env, fetchFn: ctx.fetchFn });
   } catch (e) {
-    if (source.kind === 'directory') await advanceCursor(ctx.sql, key);   // never stay stuck on one area
+    // Directory servers busy: keep the same area and try it again at the next cycle (no area is skipped).
     await ctx.sql`update public.sources set health = case when consecutive_failures >= 2 then 'down' else 'degraded' end,
       consecutive_failures = consecutive_failures + 1, last_error = ${(e as Error).message.slice(0, 500)}, last_run_at = now() where key = ${key}`;
     throw e;

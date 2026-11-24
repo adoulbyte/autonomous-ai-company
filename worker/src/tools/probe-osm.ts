@@ -11,7 +11,7 @@ for (const [cursor, radius] of [[5, 1500], [6, 1500]]) {
 }
 
 // Raw reachability of each server with a trivial query.
-for (const host of ['overpass-api.de', 'overpass.openstreetmap.fr', 'overpass.kumi.systems', 'overpass.private.coffee']) {
+for (const host of ['overpass-api.de', 'overpass.kumi.systems', 'overpass.private.coffee']) {
   const t = Date.now();
   try {
     const r = await fetch(`https://${host}/api/interpreter?data=${encodeURIComponent('[out:json][timeout:10];node(1);out;')}`, { headers: { 'user-agent': 'aic-opportunity-scout/1.0 (private single-owner business system; low volume)' }, signal: AbortSignal.timeout(20000) });
