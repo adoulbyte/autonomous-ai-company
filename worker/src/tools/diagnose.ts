@@ -22,6 +22,9 @@ try {
   // Public-safe: counts only (no addresses, names or subjects).
   show('outbound emails by status', await sql`select status, count(*)::int n, max(sent_at) last_sent from public.messages where direction = 'outbound' group by 1`);
   show('inbound emails by category', await sql`select coalesce(classification->>'category', 'unclassified') category, count(*)::int n from public.messages where direction = 'inbound' group by 1`);
+  show('inbound linked to prospects (public-safe)', await sql`select m.created_at, m.classification->>'category' category, m.classification->>'intent' intent,
+      (m.from_addr ~* '(mailer-daemon|postmaster|no-?reply)') as automated, l.stage
+      from public.messages m join public.conversations c on c.id = m.conversation_id join public.leads l on l.id = c.lead_id where m.direction = 'inbound' order by m.created_at desc limit 20`);
   show('mailbox', await sql`select last_poll_at, last_error is not null as has_error from public.mailbox_state`);
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
 finally { await sql.end({ timeout: 5 }); }
