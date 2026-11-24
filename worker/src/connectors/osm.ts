@@ -1,5 +1,6 @@
 import type { Connector, RawOpportunity } from './types.js';
 import { getJson } from './http.js';
+import { RetryableError } from '../errors.js';
 
 /**
  * Local businesses from OpenStreetMap (open data, ODbL) that PUBLISH a business email address.
@@ -61,12 +62,12 @@ export const osmBusinesses: Connector = async ({ config, maxItems, fetchFn }) =>
   // The email tag is very selective, so the query stays light; business categories are filtered in code.
   const q = `[out:json][timeout:25];(nwr(around:${r},${lat},${lon})["email"]["name"];nwr(around:${r},${lat},${lon})["contact:email"]["name"];);out tags 300;`;
   // Public Overpass instances (official + community mirrors): try the next one when a server is overloaded.
-  let data: { elements: OsmEl[] } | null = null; let lastErr: unknown = null;
+  let data: { elements: OsmEl[] } | null = null; const errors: string[] = [];
   for (const host of OVERPASS_HOSTS) {
     try { data = await getJson<{ elements: OsmEl[] }>(`https://${host}/api/interpreter?data=${encodeURIComponent(q)}`, { fetchFn }); break; }
-    catch (e) { lastErr = e; }
+    catch (e) { errors.push((e as Error).message.slice(0, 160)); }
   }
-  if (!data) throw lastErr;
+  if (!data) throw new RetryableError(`all Overpass servers failed: ${errors.join(' | ')}`);
   const seen = new Set<string>();
   const out: RawOpportunity[] = [];
   for (const el of data.elements ?? []) {
