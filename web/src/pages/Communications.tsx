@@ -28,7 +28,8 @@ export function Conversation({ conversationId, title, leadId }: { conversationId
             {m.status === 'draft' && m.direction === 'outbound' && <><button className="btn sm" onClick={() => { setEditing(m.id); setDraft(m.body); }}>Edit</button>
               <ActionButton className="btn sm primary" success="Submitted for approval" action={() => rpc('owner_submit_message', { p_message_id: m.id })} onDone={reload}>Submit for approval</ActionButton></>}
             {m.status === 'awaiting_approval' && <Link className="btn sm" to="/approvals">Review in Approvals</Link>}
-            {m.status === 'approved' && <><button className="btn sm" onClick={() => navigator.clipboard.writeText(`${m.subject ?? ''}\n\n${m.body}`)}>Copy text</button>
+            {m.status === 'approved' && m.to_addr?.includes('@') && <Badge value="Envoi automatique depuis Gmail au prochain cycle" tone="ok" />}
+            {m.status === 'approved' && !m.to_addr?.includes('@') && <><button className="btn sm" onClick={() => navigator.clipboard.writeText(`${m.subject ?? ''}\n\n${m.body}`)}>Copy text</button>
               {m.to_addr?.includes('@') && <a className="btn sm" href={`mailto:${m.to_addr}?subject=${encodeURIComponent(m.subject ?? '')}&body=${encodeURIComponent(m.body)}`}>Open in email client</a>}
               <ActionButton className="btn sm primary" confirm="Confirm you have actually sent this message?" success="Marked as sent"
                 action={() => rpc('owner_mark_message_sent', { p_message_id: m.id, p_reference: window.prompt('Reference (e.g. sent from Gmail, platform message link) — optional') || null })} onDone={reload}>Mark sent</ActionButton></>}

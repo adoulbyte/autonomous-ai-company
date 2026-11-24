@@ -15,7 +15,7 @@ export function NextActions() {
       q<Row[]>(supabase.from('projects').select('id,name,budget_minor,currency,invoices(id,status)').in('status', ['delivered', 'accepted'])),
       q<Row[]>(supabase.from('invoices').select('id,number,amount_minor,currency').eq('status', 'draft')),
       q<Row[]>(supabase.from('invoices').select('id,number,amount_minor,currency,due_date,status').in('status', ['issued', 'partially_paid', 'overdue'])),
-      q<Row[]>(supabase.from('messages').select('id,subject').eq('status', 'approved')),
+      q<Row[]>(supabase.from('messages').select('id,subject').eq('status', 'approved').not('to_addr', 'ilike', '%@%')),   // emails go out automatically
       q<Row[]>(supabase.from('payments').select('id').eq('status', 'pending')),
     ]);
     const noInvoice = deliveredNoInvoice.filter((p) => !(p.invoices as Row[]).some((i) => i.status !== 'void'));
@@ -25,8 +25,8 @@ export function NextActions() {
         detail: 'Des factures sont prêtes mais ne peuvent pas partir sans tes coordonnées de paiement. Paramètres → « Coordonnées de paiement » : renseigne l\'IBAN puis coche « Activer ».' },
       { key: 'approvals', icon: '✅', title: 'Décisions à prendre', count: approvals.length, to: '/approvals', cta: 'Voir les approbations',
         detail: approvals.length ? `Ex. : « ${approvals[0].title} ». Les agents attendent ton accord avant d'agir.` : '' },
-      { key: 'messages', icon: '✉️', title: 'Messages approuvés à envoyer', count: approvedMsgs.length, to: '/communications', cta: 'Ouvrir Communications',
-        detail: 'Copie le message (ou « Open in email client »), envoie-le, puis clique « Mark sent ».' },
+      { key: 'messages', icon: '✉️', title: 'Messages sans adresse e-mail', count: approvedMsgs.length, to: '/communications', cta: 'Ouvrir Communications',
+        detail: 'Ces rares messages visent une plateforme (pas d\'e-mail) : ils ne peuvent pas partir automatiquement. Tu peux les ignorer.' },
       { key: 'deliver', icon: '⏳', title: 'Travail terminé — en attente du paiement client', count: readyProjects.length, to: readyProjects[0] ? `/projects/${readyProjects[0].id}` : '/projects', cta: 'Voir le projet',
         detail: readyProjects.length ? `« ${readyProjects[0].name} » a passé deux contrôles qualité indépendants. La facture a été émise ; les livrables seront envoyés automatiquement dès que le paiement est confirmé.` : '' },
       { key: 'noinvoice', icon: '🧾', title: 'Projet livré sans facture', count: noInvoice.length, to: '/finance', cta: 'Créer la facture',

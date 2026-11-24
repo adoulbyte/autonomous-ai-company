@@ -126,7 +126,7 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
       expectedBenefit: `Opens a conversation for a lead valued at ${lead.value_minor ? (Number(lead.value_minor) / 100).toFixed(0) + ' ' + lead.currency : 'an unknown amount'}.`,
       risk: 'External communication under your business identity. Check tone, accuracy and that the recipient published this contact channel.',
       riskLevel: 'medium', entityType: 'message', entityId: msg.id, taskId: ctx.task.id, key: `message.send:${msg.id}`,
-      ifApproved: `Message becomes "approved". Send it via ${lead.contact_email ? 'email to ' + lead.contact_email : 'the platform at ' + to}, then click "Mark sent" — the lead moves to Contacted and a follow-up is scheduled.`,
+      ifApproved: lead.contact_email ? `The email is sent automatically from the company mailbox to ${lead.contact_email} at the next cycle; the lead moves to Contacted and follow-ups are scheduled.` : `No email address: the message targets ${to} and cannot be sent automatically.`,
       ifRejected: 'Message is discarded; the lead stays Qualified. You can edit and resubmit a draft from Communications.',
       payload: { message_id: msg.id },
     });
