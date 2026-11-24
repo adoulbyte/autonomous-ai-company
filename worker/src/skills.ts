@@ -18,7 +18,12 @@ export function skillsFor(kind: 'sales' | 'negotiation' | 'production' | 'qa', h
   if (kind === 'production' || kind === 'qa') {
     if (/code|python|script|api|javascript|typescript|react|node|bug|software|app|automation/.test(h)) names.add('software-development');
     if (/data|csv|excel|etl|scrap|automation|pipeline/.test(h)) names.add('data-and-automation');
-    if (/markdown|text|research|report|proposal|document|content|writing|article|html/.test(h) || names.size === 0) names.add('research-and-writing');
+    if (/html|website|site|vitrine|landing/.test(h)) names.add('showcase-website');
+    if (/ad|ads|publicit|campaign|social|instagram|facebook|tiktok|marketing|script/.test(h)) names.add('marketing-and-ads');
+    if (/pdf|flyer|menu|brochure|price list|tarif|guide/.test(h)) names.add('documents-and-pdf');
+    if (/spreadsheet|excel|planning|budget|stock|csv/.test(h)) names.add('spreadsheets');
+    if (/svg|logo|design|visual|banner|post/.test(h)) names.add('simple-design');
+    if (/markdown|text|research|report|proposal|document|content|writing|article/.test(h) || names.size === 0) names.add('research-and-writing');
     if (kind === 'qa') names.add('quality-review');
   }
   return [...names].map(load).filter(Boolean).join('\n\n');

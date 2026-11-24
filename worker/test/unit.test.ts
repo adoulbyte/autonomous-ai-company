@@ -211,3 +211,19 @@ describe('contact enrichment (published business addresses only)', () => {
     expect(scoreOpportunity({ ...vague, evidence_quality: 0.1 }, W, R).status).toBe('rejected');
   });
 });
+
+import { deliverableFile } from '../src/agents/production.js';
+describe('client-ready deliverable files', () => {
+  it('renders a Markdown document as a real PDF and a spreadsheet as Excel-ready CSV', async () => {
+    const pdf = await deliverableFile({ title: 'Menu du jour', format: 'pdf', content: '# Menu\n\n## Entrées\n- Salade de chèvre chaud – 8,50 €\n\n| Plat | Prix |\n|---|---|\n| Bœuf bourguignon | 16 € |' }, 0, 'Brasserie');
+    expect(pdf.filename).toBe('01-Menu_du_jour.pdf');
+    expect(Buffer.from(pdf.content_b64, 'base64').subarray(0, 5).toString()).toBe('%PDF-');
+    const xls = await deliverableFile({ title: 'Planning', format: 'spreadsheet', content: 'Jour;Employé\nLundi;Zoé' }, 1, 'X');
+    const buf = Buffer.from(xls.content_b64, 'base64');
+    expect([...buf.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(buf.toString('utf8')).toContain('Employé');
+  });
+  it('flags a website that is not a complete, mobile-friendly page', () => {
+    expect(staticChecks('<div>' + 'x'.repeat(300) + '</div>', 'html').join(' ')).toMatch(/complete HTML/);
+  });
+});

@@ -6,6 +6,7 @@ import { sha256, untrusted } from '../sanitize.js';
 import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
 import { getSetting, logEvent } from '../db.js';
 import { skillsFor } from '../skills.js';
+import { renderMarkdownPdf, excelCsv } from '../email/document.js';
 import { renderInvoicePdf, type PaymentInstructions } from '../email/invoice.js';
 import { previewBlock, renderHtml } from '../email/template.js';
 import { identity } from './comms.js';
@@ -24,7 +25,7 @@ const PlanSchema = z.object({
     key: z.string().regex(/^[a-z0-9][a-z0-9_-]{1,40}$/),
     title: z.string().min(3).max(160),
     requirement_index: z.number().int().min(0),
-    format: z.enum(['markdown', 'code', 'json', 'text', 'html', 'csv']),
+    format: z.enum(['markdown', 'code', 'json', 'text', 'html', 'csv', 'pdf', 'spreadsheet', 'svg']),
     instructions: z.string().min(10).max(2000),
   })).min(1).max(8),
   out_of_scope: z.array(z.string().max(300)).max(10),
@@ -41,6 +42,9 @@ export const planProject: Handler = async (ctx) => {
 Rules: every acceptance criterion must be objectively verifiable by a reviewer reading the deliverable; at most 8 work items; each work item produces ONE
 self-contained deliverable that an AI writer/developer can fully produce as text (code, documents, data, research) without access to external systems;
 requirement_index refers to the requirements array; never expand scope.
+Formats: html = complete single-file website; pdf = a document written in Markdown that is delivered as a PDF (flyer, menu, price list, guide);
+spreadsheet = CSV with ";" separator delivered for Excel (planning, price list, stock, budget); svg = a simple visual (social post, banner, logo idea);
+markdown/text = written content (ad scripts, texts); code/json/csv for technical work.
 
 Project name (trusted): ${p.name}
 Budget: ${p.budget_minor ? Number(p.budget_minor) / 100 + ' ' + p.currency : 'n/a'}; deadline: ${p.deadline_at ?? 'n/a'}
@@ -124,6 +128,22 @@ ${untrusted('project-scope', String(p.scope), 5000)}` }] });
   });
 };
 
+/** Turn a deliverable into the file the client actually uses (PDF, Excel-ready CSV, website, SVG...). */
+export async function deliverableFile(d: Record<string, unknown>, i: number, projectName: string) {
+  const base = `${String(i + 1).padStart(2, '0')}-${String(d.title).replace(/[^\w.-]+/g, '_').replace(/_(html|pdf|csv|svg|md)$/i, '').slice(0, 60)}`;
+  const text = String(d.content);
+  switch (String(d.format)) {
+    case 'pdf': return { filename: `${base}.pdf`, content_b64: (await renderMarkdownPdf(text, projectName)).toString('base64'), contentType: 'application/pdf' };
+    case 'spreadsheet': return { filename: `${base}.csv`, content_b64: excelCsv(text).toString('base64'), contentType: 'text/csv' };
+    case 'html': return { filename: `${base}.html`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'text/html' };
+    case 'svg': return { filename: `${base}.svg`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'image/svg+xml' };
+    default: {
+      const ext: Record<string, string> = { markdown: 'md', code: 'txt', json: 'json', text: 'txt', csv: 'csv' };
+      return { filename: `${base}.${ext[String(d.format)] ?? 'txt'}`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'text/plain' };
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // qa.review — independent Quality Assurance Agent
 // ---------------------------------------------------------------------------
@@ -134,6 +154,10 @@ export function staticChecks(content: string, format: string): string[] {
   if (PLACEHOLDER.test(content)) issues.push(`Contains placeholder text: "${content.match(PLACEHOLDER)?.[0]}".`);
   if (format === 'json') { try { JSON.parse(content); } catch { issues.push('Declared JSON format but content is not valid JSON.'); } }
   if (format === 'markdown' && /^#{1,6}\s*$/m.test(content)) issues.push('Markdown contains empty headings.');
+  if (format === 'html' && !/<html[\s>]/i.test(content)) issues.push('Website must be a complete HTML document (<html>...</html>).');
+  if (format === 'html' && !/name=["']viewport["']/i.test(content)) issues.push('Website is not mobile friendly (missing viewport meta tag).');
+  if (format === 'svg' && !/<svg[\s\S]*<\/svg>\s*$/i.test(content.trim())) issues.push('Visual must be a single complete SVG document.');
+  if (format === 'spreadsheet' && content.trim().split('\n').length < 2) issues.push('Spreadsheet needs a header row and at least one data row.');
   if ((content.match(/```/g) ?? []).length % 2 !== 0) issues.push('Unbalanced code fences.');
   const fake = content.match(/https?:\/\/(www\.)?(example\.(com|org|net)|placeholder\.[a-z]+|via\.placeholder\.com|your-?domain\.[a-z]+)[^\s)"']*/i);
   if (fake) issues.push(`References a placeholder/fictitious URL (${fake[0]}); deliverables must not contain fake links or images.`);
@@ -313,9 +337,7 @@ export const deliverProject: Handler = async (ctx) => {
       `\n\nIf anything needs adjustment within the agreed scope, just reply to this message.\n\nThis message was prepared by an AI-assisted business system.`;
     const [conv] = await tx`insert into public.conversations(lead_id, project_id, contact_id, channel, subject)
         values (${p.lead_id}, ${projectId}, ${p.contact_id}, 'email', ${'Delivery: ' + p.name}) returning id`;
-    const ext: Record<string, string> = { markdown: 'md', code: 'txt', json: 'json', text: 'txt', html: 'html', csv: 'csv' };
-    const files = dels.map((d, i) => ({ filename: `${String(i + 1).padStart(2, '0')}-${String(d.title).replace(/[^\w.-]+/g, '_').slice(0, 60)}.${ext[d.format as string] ?? 'txt'}`,
-      content_b64: Buffer.from(String(d.content), 'utf8').toString('base64'), contentType: 'text/plain' }));
+    const files = await Promise.all(dels.map((d, i) => deliverableFile(d, i, String(p.name))));
     const free = Number(p.budget_minor ?? 0) === 0;
     const shortBody = free
       ? `Hello,\n\nAs promised, please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}), free of charge. Each one passed two independent quality reviews.\n\nIf anything needs adjusting, just reply and we will fix it.\n\nWhen you have a moment, we would really value your honest feedback: a rating from 1 to 5 and a few words on what worked and what could be better. If you are happy for us to mention you as a reference, just say so — we will never publish anything without your explicit agreement.`
