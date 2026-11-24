@@ -77,10 +77,13 @@ jobs:
       - name: Deploy to Cloudflare Workers
         if: steps.cfg.outputs.ok == 'true'
         working-directory: web
+        shell: bash
         run: |
-          npx --yes wrangler@4 deploy --var "GITHUB_REPO:$GITHUB_REPOSITORY"
+          set -o pipefail
+          # Public logs: never print the platform address.
+          npx --yes wrangler@4 deploy --var "GITHUB_REPO:$GITHUB_REPOSITORY" 2>&1 | sed -E 's#https?://[^ ]+\.workers\.dev#https://<hidden>.workers.dev#g'
           # Token that lets the Cloudflare clock start the agents (fine-grained, this repository, Actions: write only).
-          if [ -n "$DISPATCH_TOKEN" ]; then printf '%s' "$DISPATCH_TOKEN" | npx --yes wrangler@4 secret put DISPATCH_TOKEN; else echo "DISPATCH_TOKEN not set: the 20-minute Cloudflare clock stays idle"; fi
+          if [ -n "$DISPATCH_TOKEN" ]; then printf '%s' "$DISPATCH_TOKEN" | npx --yes wrangler@4 secret put DISPATCH_TOKEN 2>&1 | sed -E 's#https?://[^ ]+\.workers\.dev#https://<hidden>.workers.dev#g'; else echo "DISPATCH_TOKEN not set: the 20-minute Cloudflare clock stays idle"; fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
