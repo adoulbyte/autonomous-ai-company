@@ -62,12 +62,12 @@ export const sendOutbox: Handler = async (ctx) => {
       if (prospecting && sentOutreach >= 5) continue;   // at most 5 prospecting emails per run; the rest go next cycle
       const cls = (m.classification ?? {}) as { cta?: { lang: string; need?: string } };
       const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql)) : undefined;
-      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, noImages: prospecting });
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, noImages: prospecting, personal: prospecting });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
-      // Cold emails (first contact, follow-ups) go as plain text only, exactly like a personal message: tested to reach
-      // the Gmail inbox, whereas the designed HTML version was filtered as spam. The designed version is used once the client replied.
+      // Cold emails (first contact, follow-ups) look like a personal message with two small quick-reply buttons (tested: Gmail inbox);
+      // the designed version with the logo is used once the client has replied.
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
-        text: renderText(m.body, id), html: prospecting ? undefined : html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs,
+        text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs,
         attachments: prospecting ? attachments : (logo ? [...attachments, logo] : attachments) });
       if (prospecting) sentOutreach++;
       await ctx.sql.begin(async (tx) => {

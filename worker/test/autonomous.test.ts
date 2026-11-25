@@ -65,7 +65,7 @@ describe('paid deal cycle (owner validates the invoice and the payment)', () => 
     await run('a-1');
     const first = outbox.find((m) => m.subject.includes('Python CSV automation'));
     expect(first?.to).toBe('ops@acme-logistics.example');
-    expect(first?.html).toBeUndefined();   // first contact: plain text (inbox placement)
+    expect(first?.html).not.toContain('<table');   // first contact: simple personal message (inbox placement)
     expect(first?.text).toContain('Test Studio');
     expect(first?.text).toContain('J. Doe');
     expect(first?.text).toContain('AI-assisted production');

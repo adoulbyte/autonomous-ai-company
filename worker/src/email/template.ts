@@ -35,7 +35,18 @@ const ctaHtml = (c: Cta) => `<table role="presentation" cellpadding="0" cellspac
 
 /** The original email design (light header with the company name, body, grey signature) — the one whose first emails
  *  reached the inbox. Cold emails (first contact, follow-ups) carry no image: a small monogram replaces the logo. */
+/** Cold emails (first contact, follow-ups): a simple personal message with two small quick-reply buttons — no header,
+ *  no image, no hidden text, no table (the variant that reached the Gmail inbox in tests). */
+export function renderPersonal(body: string, id: Identity, cta?: Cta): string {
+  const ps = cleanBody(body, id).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const optIdx = ps.findIndex((p) => /\bSTOP\b/.test(p) && p.length < 220);
+  const opt = optIdx >= 0 ? ps.splice(optIdx, 1)[0] : '';
+  const buttons = cta ? `<p style="margin:18px 0"><a href="${esc(cta.yes.href)}" style="display:inline-block;padding:6px 12px;background:#111827;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:bold">${esc(cta.yes.label)}</a>&nbsp;&nbsp;<a href="${esc(cta.no.href)}" style="display:inline-block;padding:5px 11px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:5px;font-size:13px">${esc(cta.no.label)}</a></p>` : '';
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#202124">${ps.map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}${buttons}<p>${esc(id.signature).replace(/\n/g, '<br>')}</p><p style="font-size:12px;color:#80868b">${esc(id.ai_disclosure)}${opt ? `<br>${esc(opt)}` : ''}</p></div>`;
+}
+
 export function renderHtml(body: string, id: Identity, opts: { preheader?: string; blocks?: string; cta?: Cta; highlights?: Highlights; personal?: boolean; noImages?: boolean } = {}): string {
+  if (opts.personal) return renderPersonal(body, id, opts.cta);
   const paras = cleanBody(body, id).split(/\n{2,}/).map((p) =>
     p.startsWith('- ') || p.includes('\n- ')
       ? `<ul style="margin:0 0 16px 18px;padding:0">${p.split('\n').map((l) => `<li style="margin:0 0 6px">${esc(l.replace(/^-\s*/, ''))}</li>`).join('')}</ul>`
