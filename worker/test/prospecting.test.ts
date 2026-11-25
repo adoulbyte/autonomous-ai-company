@@ -163,6 +163,26 @@ describe('continuous prospecting cycle', () => {
   void HANDLERS;
 });
 
+describe('a first email whose draft failed review is not left waiting forever', () => {
+  it('gets a fresh attempt the next day, and is set aside after three failures', async () => {
+    const { enqueue } = await import('../src/queue.js');
+    const [l] = await sql`insert into public.leads(title, source, stage) values ('Stuck prospect', 'test', 'qualified') returning id`;
+    const fail = async (key: string) => {
+      const id = await enqueue(sql, { type: 'lead.draft_outreach', key, role: 'sales_agent', entityType: 'lead', entityId: String(l.id), input: { lead_id: l.id } });
+      await sql`update public.tasks set status = 'dead', error = 'Error: outreach draft below quality bar', created_at = now() - interval '1 day' where id = ${id}`;
+    };
+    await fail(`outreach:${l.id}`);
+    await scheduleDueWork(sql, new Date(), 'retry1');
+    const [{ n }] = await sql`select count(*)::int n from public.tasks where type = 'lead.draft_outreach' and entity_id::text = ${String(l.id)} and status = 'pending'`;
+    expect(n).toBe(1);
+    await sql`update public.tasks set status = 'dead', created_at = now() - interval '1 day' where type = 'lead.draft_outreach' and entity_id::text = ${String(l.id)} and status = 'pending'`;
+    await fail(`outreach:${l.id}:extra`);
+    await scheduleDueWork(sql, new Date(), 'retry2');
+    const [after] = await sql`select stage, lost_reason from public.leads where id = ${l.id}`;
+    expect(after.stage).toBe('disqualified');
+  });
+});
+
 describe('overpass fallback', () => {
   it('uses a mirror when the main server is overloaded', async () => {
     const { osmBusinesses } = await import('../src/connectors/osm.js');

@@ -82,6 +82,15 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   const followUps = await sql`select id, title, follow_ups_sent from public.leads where stage = 'contacted' and next_follow_up_at <= now()`;
   for (const l of followUps) await enqueue(sql, { type: 'lead.followup', key: `followup:${l.id}:${Number(l.follow_ups_sent) + 1}`, role: 'sales_agent', entityType: 'lead',
     entityId: String(l.id), input: { lead_id: l.id }, priority: 55, title: `Follow-up: ${String(l.title).slice(0, 70)}` });
+  // A first email whose draft failed the quality review gets a completely fresh attempt the next day (twice); after that the lead is set aside.
+  const stuck = await sql`select l.id, l.title, count(t.id)::int as dead from public.leads l join public.tasks t on t.entity_id::text = l.id::text and t.type = 'lead.draft_outreach'
+      where l.stage = 'qualified' and not exists (select 1 from public.conversations c where c.lead_id = l.id)
+      group by l.id, l.title having bool_and(t.status = 'dead') and max(t.created_at) < now() - interval '20 hours'`;
+  for (const l of stuck) {
+    if (Number(l.dead) >= 3) await sql`update public.leads set stage = 'disqualified', lost_reason = 'first email draft failed review 3 times' where id = ${l.id} and stage = 'qualified'`;
+    else await enqueue(sql, { type: 'lead.draft_outreach', key: `outreach:${l.id}:retry${l.dead}`, role: 'sales_agent', entityType: 'lead', entityId: String(l.id),
+      input: { lead_id: l.id }, priority: 58, title: `Draft outreach (new attempt): ${String(l.title).slice(0, 70)}`, timeoutSeconds: 200 });
+  }
   // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
   const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
   for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
