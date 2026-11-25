@@ -46,6 +46,17 @@ ${h.items.map((i) => `<table role="presentation" cellpadding="0" cellspacing="0"
 /** Branded, email-client-safe HTML (inline styles, table layout, mobile friendly): header with logo, organised body,
  *  offer highlights and reply buttons when given, signature block, discreet footer with the opt-out sentence. */
 export function renderHtml(body: string, id: Identity, opts: { preheader?: string; blocks?: string; cta?: Cta; highlights?: Highlights; personal?: boolean; noImages?: boolean } = {}): string {
+  // Cold emails (first contact, follow-ups): looks like a normal one-to-one email — best inbox placement for a young mailbox.
+  if (opts.personal) {
+    const ps = cleanBody(body, id).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    const links = opts.cta ? `<p style="margin:0 0 16px">→ <a href="${esc(opts.cta.yes.href)}" style="color:#1a0dab">${esc(opts.cta.yes.label)}</a><br>→ <a href="${esc(opts.cta.no.href)}" style="color:#5f6368">${esc(opts.cta.no.label)}</a></p>` : '';
+    const optIdx = ps.findIndex((p) => /\bSTOP\b/.test(p) && p.length < 220);
+    const opt = optIdx >= 0 ? ps.splice(optIdx, 1)[0] : '';
+    return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#202124">
+${ps.map((p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}${links}
+<p style="margin:16px 0 0">${esc(id.signature).replace(/\n/g, '<br>')}</p>
+<p style="margin:14px 0 0;font-size:12px;color:#80868b">${esc(id.ai_disclosure)}${opt ? `<br>${esc(opt)}` : ''}</p></body></html>`;
+  }
   const all = cleanBody(body, id).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   // The opt-out sentence goes to the footer, where readers expect it.
   const optOutIdx = all.findIndex((p) => /\bSTOP\b/.test(p) && p.length < 220);
