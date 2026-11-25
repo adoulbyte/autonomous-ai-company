@@ -25,6 +25,16 @@ try {
   show('inbound linked to prospects (public-safe)', await sql`select m.created_at, m.classification->>'category' category, m.classification->>'intent' intent,
       (m.from_addr ~* '(mailer-daemon|postmaster|no-?reply)') as automated, l.stage
       from public.messages m join public.conversations c on c.id = m.conversation_id join public.leads l on l.id = c.lead_id where m.direction = 'inbound' order by m.created_at desc limit 20`);
+  // Why a prospect has not received its first email yet (counts only).
+  show('leads waiting for a first email', await sql`select l.stage, coalesce(m.status, 'no draft yet') first_message, coalesce(t.status, 'no task') outreach_task,
+      left(regexp_replace(coalesce(t.error, ''), '(:.*$)|([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+)', '', 'g'), 80) task_error, count(*)::int n, min(l.created_at) oldest
+      from public.leads l
+      left join lateral (select m.status from public.messages m join public.conversations c on c.id = m.conversation_id where c.lead_id = l.id and m.idempotency_key like 'outreach:%' limit 1) m on true
+      left join lateral (select t.status, t.error from public.tasks t where t.entity_id::text = l.id::text and t.type like 'lead.%' and t.type not in ('lead.followup','lead.mockup','lead.proposal_reminder','lead.respond') order by t.created_at desc limit 1) t on true
+      where l.stage in ('new','qualified') group by 1,2,3,4 order by 5 desc`.catch((e) => String(e.message)));
+  show('first emails sent today vs daily cap', await sql`select (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'outreach:%' and sent_at >= date_trunc('day', now())) sent_today,
+      (select count(*)::int from public.messages where direction = 'outbound' and status = 'approved' and idempotency_key like 'outreach:%') approved_waiting,
+      (select value from public.settings where key = 'prospecting.policy') policy`.catch((e) => String(e.message)));
   show('mailbox', await sql`select last_poll_at, last_error is not null as has_error from public.mailbox_state`);
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
 finally { await sql.end({ timeout: 5 }); }
