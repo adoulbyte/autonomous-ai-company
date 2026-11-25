@@ -41,7 +41,7 @@ export function renderPersonal(body: string, id: Identity, cta?: Cta): string {
   const ps = cleanBody(body, id).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   const optIdx = ps.findIndex((p) => /\bSTOP\b/.test(p) && p.length < 220);
   const opt = optIdx >= 0 ? ps.splice(optIdx, 1)[0] : '';
-  const buttons = cta ? `<p style="margin:18px 0"><a href="${esc(cta.yes.href)}" style="display:inline-block;padding:6px 12px;background:#111827;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:bold">${esc(cta.yes.label)}</a>&nbsp;&nbsp;<a href="${esc(cta.no.href)}" style="display:inline-block;padding:5px 11px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:5px;font-size:13px">${esc(cta.no.label)}</a></p>` : '';
+  const buttons = cta ? `<p style="margin:18px 0"><a href="${esc(cta.yes.href)}" style="display:inline-block;margin:0 6px 6px 0;padding:6px 12px;background:#111827;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:bold">${esc(cta.yes.label)}</a> <a href="${esc(cta.no.href)}" style="display:inline-block;margin:0 0 6px 0;padding:5px 11px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:5px;font-size:13px">${esc(cta.no.label)}</a></p>` : '';
   return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#202124">${ps.map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}${buttons}<p>${esc(id.signature).replace(/\n/g, '<br>')}</p><p style="font-size:12px;color:#80868b">${esc(id.ai_disclosure)}${opt ? `<br>${esc(opt)}` : ''}</p></div>`;
 }
 
