@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 3.3.0 }   # pinned: 3.4.0 changed 'init', and resolving 'latest' hits GitHub rate limits
       - name: Start Supabase (applies supabase/migrations)
         run: |
           supabase --version
