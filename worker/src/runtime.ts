@@ -12,8 +12,9 @@ import { followUp, pollInbox, sendOutbox } from './agents/comms.js';
 import { respondToLead } from './agents/negotiation.js';
 import { captureFeedback } from './agents/feedback.js';
 import { marketingReview } from './agents/marketing.js';
-import { prospectMockup, proposalReminder } from './agents/mockup.js';
+import { prospectMockup, proposalReminder, reviseMockup } from './agents/mockup.js';
 import { getPlans, offerSubscription, subscriptionCycle } from './agents/subscriptions.js';
+import { reviseCreatives } from './agents/revise.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -43,8 +44,8 @@ export const HANDLERS: Record<string, Handler> = {
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'marketing.review': marketingReview,
-  'lead.mockup': prospectMockup, 'lead.proposal_reminder': proposalReminder,
-  'subscription.offer': offerSubscription, 'subscription.cycle': subscriptionCycle,
+  'lead.mockup': prospectMockup, 'lead.proposal_reminder': proposalReminder, 'lead.revise_mockup': reviseMockup,
+  'subscription.offer': offerSubscription, 'subscription.cycle': subscriptionCycle, 'creative.revise': reviseCreatives,
   'system.health_check': healthCheck,
 };
 

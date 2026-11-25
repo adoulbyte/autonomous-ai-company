@@ -3,6 +3,8 @@ import { factsFromListing, renderSite, SiteContentSchema, type SiteContent } fro
 import { tradeProfile, type Photo } from '../render/photos.js';
 import { screenshotHtml } from '../render/screenshot.js';
 import { produceSocialDeliverable } from './subscriptions.js';
+import { editDesign, renderDesign, type Design } from '../render/edit.js';
+import { mockupDesign } from './mockup.js';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
@@ -97,13 +99,20 @@ export const produceDeliverable: Handler = async (ctx) => {
   const [req] = await ctx.sql`select id, description, acceptance_criteria from public.requirements where project_id = ${project_id} and position = ${item.requirement_index}`;
   const existing = await ctx.sql`select id from public.deliverables where project_id = ${project_id} and work_item = ${work_item} and version = ${version}`;
   if (existing.length) return finish(ctx, async () => ({ skipped: 'version already produced', deliverable_id: existing[0].id }));
-  const prev = version > 1 ? await ctx.sql`select content from public.deliverables where project_id = ${project_id} and work_item = ${work_item} and version = ${version - 1}` : [];
+  const prev = version > 1 ? await ctx.sql`select content, design from public.deliverables where project_id = ${project_id} and work_item = ${work_item} and version = ${version - 1}` : [];
+  // A new version of a designed creation is a precise edit of the previous one (same design), never a new creation.
+  let edited: { data: z.infer<typeof DeliverableSchema>; model: string; design: Design } | null = null;
+  if (prev[0]?.design && feedback?.length) {
+    const r = await editDesign({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn, design: prev[0].design as Design,
+      request: feedback.join('\n'), from: feedback.some((f) => f.startsWith('CLIENT')) ? 'client' : 'qa' });
+    if (r.kind === 'done') edited = { model: r.model, design: r.design, data: { title: String(item.title), content: r.html, notes: `Modifications: ${r.changes.join(' ; ')}`, limitations: [] } };
+  }
 
   // A website ordered after a mockup: the final site is built from the mockup the client approved (same design and photos),
   // with the texts updated from what the client sent us. Same engine as the mockup, so the result matches what they saw.
-  const fromMockup = item.format === 'social' ? await produceSocialDeliverable(ctx, p, item, feedback)
-    : item.format === 'html' && p.lead_id ? await siteFromMockup(ctx, String(p.lead_id), feedback) : null;
-  const res: { data: z.infer<typeof DeliverableSchema>; model: string } = fromMockup ?? await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
+  const fromMockup = edited ?? (item.format === 'social' ? await produceSocialDeliverable(ctx, p, item, feedback)
+    : item.format === 'html' && p.lead_id ? await siteFromMockup(ctx, String(p.lead_id), feedback) : null);
+  const res: { data: z.infer<typeof DeliverableSchema>; model: string; design?: Design } = fromMockup ?? await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
     messages: [{ role: 'user', content: `${skillsFor('production', `${item.format} ${item.title} ${item.instructions}`)}
 
 Produce the complete deliverable for this work item, to a standard a demanding paying client accepts without changes. Return JSON {title, content, notes, limitations}.
@@ -125,9 +134,10 @@ ${untrusted('project-scope', String(p.scope), 5000)}` }] });
           and version < ${version} and status in ('changes_requested','approved')`;
     }
     const [d] = await tx`insert into public.deliverables(project_id, requirement_id, work_item, version, title, format, content, content_hash,
-          status, produced_by_role, produced_by_task, produced_by_model, producer_notes)
+          status, produced_by_role, produced_by_task, produced_by_model, producer_notes, design)
         values (${project_id}, ${req?.id ?? null}, ${work_item}, ${version}, ${res.data.title}, ${item.format}, ${res.data.content}, ${sha256(res.data.content)},
-          'in_qa', 'specialist_worker', ${ctx.task.id}, ${res.model}, ${[res.data.notes, ...res.data.limitations.map((l) => 'Limitation: ' + l)].join('\n')})
+          'in_qa', 'specialist_worker', ${ctx.task.id}, ${res.model}, ${[res.data.notes, ...res.data.limitations.map((l) => 'Limitation: ' + l)].join('\n')},
+          ${res.design ? tx.json(res.design as never) : null})
         returning id`;
     await enqueue(tx, { type: 'qa.review', key: `qa:${d.id}`, role: 'qa_reviewer', entityType: 'deliverable', entityId: d.id,
       input: { deliverable_id: d.id }, priority: 58, title: `QA: ${res.data.title.slice(0, 80)} v${version}`, timeoutSeconds: 300 });
@@ -299,7 +309,7 @@ export const prepareDelivery: Handler = async (ctx) => {
                   current_date + 7, ${p.budget_minor}, ${p.currency}, 'Payment due before release of the deliverables.') returning *`;
     }
     if (inv && inv.status === 'draft') await tx`update public.invoices set status = 'issued' where id = ${inv.id}`;
-    if (!inv) {   // zero-price project: deliver immediately
+    if (!inv || inv.status === 'paid') {   // zero-price project, or a revision of a project already paid: deliver immediately (no new invoice)
       await enqueue(tx, { type: 'project.deliver', key: `deliver-free:${projectId}:${sha256(dels.map((d) => d.id).join(',')).slice(0, 12)}`, role: 'project_manager', entityType: 'project', entityId: projectId,
         input: { project_id: projectId }, priority: 85, title: 'Deliver (no payment due)' });
       return { deliverables: dels.length, invoice: null };
@@ -382,10 +392,14 @@ export const deliverProject: Handler = async (ctx) => {
       : free
       ? `Hello,\n\nAs promised, please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}), free of charge. Each one passed two independent quality reviews.\n\nIf anything needs adjusting, just reply and we will fix it.\n\nWhen you have a moment, we would really value your honest feedback: a rating from 1 to 5 and a few words on what worked and what could be better. If you are happy for us to mention you as a reference, just say so — we will never publish anything without your explicit agreement.`
       : `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
+    // A re-delivery after the client's changes: say exactly what was changed.
+    const changed = (await tx`select title, producer_notes from public.deliverables where project_id = ${projectId} and status = 'ready_for_delivery' and producer_notes like 'Modifications:%'`);
+    const revisionNote = p.delivered_at && changed.length ? (fr ? `\n\nVoici la version mise à jour avec les modifications demandées :\n${changed.map((c) => `- ${c.title} : ${String(c.producer_notes).replace(/^Modifications:\s*/, '')}`).join('\n')}\nTout le reste est inchangé.`
+      : `\n\nHere is the updated version with the changes you asked for:\n${changed.map((c) => `- ${c.title}: ${String(c.producer_notes).replace(/^Modifications:\s*/, '')}`).join('\n')}\nEverything else is unchanged.`) : '';
     const stop = p.subscription_id ? (fr ? `\n\nVos visuels du mois sont prêts à publier. Le mois prochain, nous vous préparons de nouveaux visuels. Pour arrêter l’abonnement, répondez simplement « Arrêter l’abonnement » : c’est immédiat.`
       : `\n\nYour visuals for this month are ready to post. Next month we will prepare new ones. To stop the subscription, simply reply "Stop my subscription": it is immediate.`) : '';
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, attachments, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Livraison : ' : 'Delivery: ') + p.name}, ${(files.length ? shortBody : body) + stop}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Livraison : ' : 'Delivery: ') + p.name}, ${(p.delivered_at && changed.length ? (fr ? 'Bonjour,' : 'Hello,') + revisionNote : (files.length ? shortBody : body)) + stop}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'delivery.send', title: `Livraison : ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
       reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),
@@ -404,7 +418,7 @@ const FinalSiteSchema = SiteContentSchema.extend({
   phone: z.string().max(40).nullable().optional(), hours: z.string().max(200).nullable().optional(), address: z.string().max(200).nullable().optional(),
 });
 
-async function siteFromMockup(ctx: Parameters<Handler>[0], leadId: string, feedback?: string[]): Promise<{ data: z.infer<typeof DeliverableSchema>; model: string } | null> {
+async function siteFromMockup(ctx: Parameters<Handler>[0], leadId: string, feedback?: string[]): Promise<{ data: z.infer<typeof DeliverableSchema>; model: string; design: Design } | null> {
   const [l] = await ctx.sql`select l.quote, o.analysis, o.description as listing, o.buyer_name, k.email from public.leads l
       left join public.opportunities o on o.id = l.opportunity_id left join public.contacts k on k.id = l.contact_id where l.id = ${leadId}`;
   const q = (l?.quote ?? {}) as { mockup_content?: SiteContent; mockup_photos?: Photo[]; mockup_html?: string; need?: string };
@@ -423,11 +437,10 @@ ${feedback?.length ? `The quality reviewer asked for these corrections — apply
 ${untrusted('mockup-texts', JSON.stringify(q.mockup_content), 8000)}
 ${untrusted('business-listing', String(l.listing ?? ''), 2000)}
 ${untrusted('client-messages', thread.map((t) => String(t.body).slice(0, 2000)).join('\n---\n'), 8000)}` }] });
-  const facts = factsFromListing(String(l.listing ?? ''), String(l.buyer_name ?? ''), a.city, l.email);
-  const photos = q.mockup_photos?.length ? q.mockup_photos
-    : [...new Set([...(q.mockup_html ?? '').matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]))].map((url) => ({ url, thumb: url, credit: null }));
+  const base = mockupDesign(q as Record<string, unknown>, { listing: String(l.listing ?? ''), name: String(l.buyer_name ?? ''), city: a.city, email: l.email, category: a.category, lang })!;
   const { phone, hours, address, ...content } = r.data;
-  const html = renderSite(content, { ...facts, phone: phone ?? facts.phone, hours: hours ?? facts.hours, address: address ?? facts.address }, photos, tradeProfile(a.category).theme, lang);
-  return { model: r.model, data: { title: `Site vitrine — ${facts.name}`, content: html,
-    notes: 'Built from the mockup approved by the client (same design and photos), with the information they sent.', limitations: [] } };
+  const design: Design = { ...base, kind: 'site', content: content as Record<string, unknown>,
+    facts: { ...base.facts, phone: phone ?? base.facts.phone, hours: hours ?? base.facts.hours, address: address ?? base.facts.address } };
+  return { model: r.model, design, data: { title: `Site vitrine — ${design.facts.name}`, content: renderDesign(design),
+    notes: 'Built from the mockup approved by the client (same design, colours and photos), with the information they sent.', limitations: [] } };
 }

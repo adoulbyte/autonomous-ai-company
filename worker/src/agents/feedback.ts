@@ -35,6 +35,13 @@ ${untrusted('client-reply', `Subject: ${m.subject ?? ''}\n\n${m.body}`, 6000)}` 
   return finish(ctx, async (tx) => {
     await tx`insert into public.client_feedback(project_id, message_id, rating, comment, permission_to_publish, wants_changes, change_request, author)
         values (${projectId}, ${messageId}, ${f.rating}, ${f.comment}, ${f.permission_to_publish}, ${f.wants_changes}, ${f.change_request}, ${m.from_addr})`;
+    const designed = f.wants_changes && (await tx`select 1 from public.deliverables where project_id = ${projectId} and design is not null limit 1`).length > 0;
+    if (designed && p.status === 'delivered') {
+      // Designed creations (website, visuals): precise edits of exactly what the client asked, from their own words.
+      await enqueue(tx, { type: 'creative.revise', key: `revise:${messageId}`, role: 'specialist_worker', entityType: 'project', entityId: projectId,
+        input: { project_id: projectId, message_id: messageId }, priority: 75, title: `Client changes: ${String(p.name).slice(0, 70)}`, timeoutSeconds: 480 });
+      return { rating: f.rating, wants_changes: true, routed: 'creative.revise' };
+    }
     if (f.wants_changes && f.change_request && ['delivered', 'accepted'].includes(String(p.status))) {
       if (p.status === 'accepted') throw new PermanentError('project already accepted');
       await tx`update public.projects set status = 'revision' where id = ${projectId}`;
@@ -43,7 +50,7 @@ ${untrusted('client-reply', `Subject: ${m.subject ?? ''}\n\n${m.body}`, 6000)}` 
         await tx`update public.deliverables set status = 'changes_requested' where id = ${d.id} and status = 'delivered'`;
         await enqueue(tx, { type: 'production.execute', key: `produce:${projectId}:${d.work_item}:v${Number(d.version) + 1}`, role: 'specialist_worker',
           entityType: 'project', entityId: projectId, priority: 70, timeoutSeconds: 300,
-          input: { project_id: projectId, work_item: d.work_item, version: Number(d.version) + 1, feedback: [`CLIENT CHANGE REQUEST: ${f.change_request}`] },
+          input: { project_id: projectId, work_item: d.work_item, version: Number(d.version) + 1, feedback: [`CLIENT CHANGE REQUEST: ${f.change_request}`, `CLIENT'S EXACT WORDS: ${String(m.body).slice(0, 2000)}`] },
           title: `Client revision: ${d.work_item} v${Number(d.version) + 1}` });
       }
       await logEvent(tx, 'project', projectId, 'client_revision_requested', `Client requested changes on "${p.name}" — new version in production`, { request: f.change_request }, 'warning');

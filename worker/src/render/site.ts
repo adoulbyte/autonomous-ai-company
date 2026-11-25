@@ -32,6 +32,24 @@ export const PostContentSchema = z.object({
 });
 export type PostContent = z.infer<typeof PostContentSchema>;
 
+/** Owner/client adjustments on top of the trade theme (exact colours, fonts, hidden sections). */
+export type Style = { primary?: string; accent?: string; dark?: string; background?: string; text?: string; heading_font?: string; body_font?: string };
+export type SiteSection = 'services' | 'about' | 'gallery' | 'info' | 'cta_band';
+export const FONTS = ['Playfair Display', 'DM Serif Display', 'Cormorant Garamond', 'Fraunces', 'Lora', 'Merriweather', 'Libre Baskerville', 'Montserrat', 'Poppins',
+  'Syne', 'Manrope', 'Inter', 'Raleway', 'Roboto', 'Open Sans', 'Lato', 'Nunito', 'Josefin Sans', 'Oswald', 'Bebas Neue', 'Pacifico', 'Great Vibes'];
+function styled(t: Theme, s?: Style): Theme {
+  if (!s) return t;
+  const font = (f: string | undefined, d: string) => (f && FONTS.includes(f) ? f : d);
+  return { ...t, primary: s.primary ?? t.primary, accent: s.accent ?? t.accent, dark: s.dark ?? t.dark, bg: s.background ?? t.bg, text: s.text ?? t.text,
+    fonts: [font(s.heading_font, t.fonts[0]), font(s.body_font, t.fonts[1])] };
+}
+/** Where each photo of a site is used (photo index → place on the page). */
+export function photoPlaces(n: number): string[] {
+  return Array.from({ length: n }, (_, i) => i === 0 ? 'main photo at the top (hero)'
+    : n - 1 >= 3 && i <= 3 ? `photo of service card ${i}` : i === (n - 1 >= 4 ? 4 : 1) ? 'photo of the "about" section'
+    : (n - 1 >= 9 ? i >= 5 && i <= 9 : n >= 5 && i <= 4) ? 'gallery photo' : 'unused');
+}
+
 export type Facts = { name: string; city?: string | null; address?: string | null; hours?: string | null; email?: string | null; phone?: string | null };
 
 type Theme = { fonts: [string, string]; primary: string; dark: string; accent: string; bg: string; surface: string; text: string; muted: string; radius: number };
@@ -126,13 +144,14 @@ section{padding:64px 0}.head h2,.split h2,.band h2{font-size:30px}.grid,.info{gr
 .wrap{padding:0 20px}.brand{font-size:20px}.band{padding:48px 24px}}
 `;
 
-export function renderSite(c: SiteContent, f: Facts, photos: Photo[], themeKey: string, lang: string): string {
-  const t = THEMES[themeKey] ?? THEMES.pro; const L = LABELS[lang] ?? LABELS.en;
+export function renderSite(c: SiteContent, f: Facts, photos: Photo[], themeKey: string, lang: string, opts: { style?: Style; hidden?: SiteSection[] } = {}): string {
+  const t = styled(THEMES[themeKey] ?? THEMES.pro, opts.style); const L = LABELS[lang] ?? LABELS.en;
+  const show = (k: SiteSection) => !(opts.hidden ?? []).includes(k);
   const bg = (p?: Photo, thumb = false) => (p ? ` style="background-image:url('${esc(thumb ? p.thumb : p.url)}')"` : '');
   const [hero, ...rest] = photos;
   const cardPhotos = rest.length >= 3 ? rest.slice(0, 3) : [];
   const aboutPhoto = rest[3] ?? rest[0];
-  const gallery = rest.length >= 9 ? rest.slice(4, 9) : photos.length >= 5 ? photos.slice(0, 5) : [];
+  const gallery = !show('gallery') ? [] : rest.length >= 9 ? rest.slice(4, 9) : photos.length >= 5 ? photos.slice(0, 5) : [];
   const hours = readableHours(f.hours, lang);
   const info = [
     f.address ? `<div class="card"><h3>${L.address}</h3><p>${esc(f.address)}</p></div>` : '',
@@ -149,25 +168,25 @@ export function renderSite(c: SiteContent, f: Facts, photos: Photo[], themeKey: 
 <style>${CSS(t)}</style></head>
 <body>
 <header class="nav"><div class="wrap"><a class="brand" href="#">${esc(f.name)}</a>
-<nav class="links"><a href="#services">${L.services}</a><a href="#about">${L.about}</a>${gallery.length ? `<a href="#gallery">${L.gallery}</a>` : ''}<a href="#contact">${L.contact}</a><a class="btn" href="#contact">${esc(c.cta)}</a></nav></div></header>
+<nav class="links">${show('services') ? `<a href="#services">${L.services}</a>` : ''}${show('about') ? `<a href="#about">${L.about}</a>` : ''}${gallery.length ? `<a href="#gallery">${L.gallery}</a>` : ''}<a href="#contact">${L.contact}</a><a class="btn" href="#contact">${esc(c.cta)}</a></nav></div></header>
 <div class="hero"${bg(hero)}><div class="wrap">
 <span class="eyebrow">${esc(c.tagline)}</span><h1>${esc(c.hero_title)}</h1><p>${esc(c.hero_text)}</p>
 <div class="actions"><a class="btn" href="#contact">${esc(c.cta)}</a><a class="btn ghost" href="#services">${L.more}</a></div>
 ${chips ? `<div class="chips">${chips}</div>` : ''}</div></div>
-<section id="services"><div class="wrap">
+${show('services') ? `<section id="services"><div class="wrap">
 <div class="head"><span class="kicker">${L.services}</span><h2>${esc(c.services_title)}</h2>${c.services_intro ? `<p>${esc(c.services_intro)}</p>` : ''}</div>
-<div class="grid">${c.services.slice(0, cardPhotos.length ? 3 : 6).map((s, i) => `<div class="card">${cardPhotos[i] ? `<div class="ph"${bg(cardPhotos[i], true)}></div>` : ''}<div class="body">${cardPhotos[i] ? '' : `<div class="num">${String(i + 1).padStart(2, '0')}</div>`}<h3>${esc(s.title)}</h3><p>${esc(s.text)}</p></div></div>`).join('')}</div>
+<div class="grid">${c.services.map((s, i) => `<div class="card">${cardPhotos[i] ? `<div class="ph"${bg(cardPhotos[i], true)}></div>` : ''}<div class="body">${cardPhotos[i] ? '' : `<div class="num">${String(i + 1).padStart(2, '0')}</div>`}<h3>${esc(s.title)}</h3><p>${esc(s.text)}</p></div></div>`).join('')}</div>
 </div></section>
-<section id="about" class="about"><div class="wrap split">
+` : ''}${show('about') ? `<section id="about" class="about"><div class="wrap split">
 <div class="img"${bg(aboutPhoto)}></div>
 <div><span class="kicker">${L.about}</span><h2>${esc(c.about_title)}</h2>${c.about_text.split(/\n+/).map((p) => `<p>${esc(p)}</p>`).join('')}
 ${c.highlights.map((h, i) => `<div class="hl"><div class="ic">${icon(i, t.primary)}</div><div><h3>${esc(h.title)}</h3><p>${esc(h.text)}</p></div></div>`).join('')}</div>
 </div></section>
-${gallery.length ? `<section id="gallery"><div class="wrap"><div class="head"><span class="kicker">${L.gallery}</span><h2>${L.moments}</h2></div>
+` : ''}${gallery.length ? `<section id="gallery"><div class="wrap"><div class="head"><span class="kicker">${L.gallery}</span><h2>${L.moments}</h2></div>
 <div class="gallery">${gallery.map((p) => `<div${bg(p, true)}></div>`).join('')}</div></div></section>` : ''}
 <section id="contact" style="padding-top:${gallery.length ? 0 : 96}px"><div class="wrap">
-${info.length ? `<div class="head"><span class="kicker">${L.info}</span><h2>${L.visit}</h2></div><div class="info" style="margin-bottom:56px">${info.join('')}</div>` : ''}
-<div class="band"><h2>${esc(c.cta_title)}</h2>${c.cta_text ? `<p>${esc(c.cta_text)}</p>` : ''}<a class="btn" href="${f.email ? `mailto:${esc(f.email)}` : '#'}">${esc(c.cta)}</a></div>
+${info.length && show('info') ? `<div class="head"><span class="kicker">${L.info}</span><h2>${L.visit}</h2></div><div class="info" style="margin-bottom:56px">${info.join('')}</div>` : ''}
+${show('cta_band') ? `<div class="band"><h2>${esc(c.cta_title)}</h2>${c.cta_text ? `<p>${esc(c.cta_text)}</p>` : ''}<a class="btn" href="${f.email ? `mailto:${esc(f.email)}` : '#'}">${esc(c.cta)}</a></div>` : ''}
 </div></section>
 <footer><div class="wrap"><div><div class="brand">${esc(f.name)}</div><div>${esc([f.address, f.email].filter(Boolean).join(' · '))}</div></div>
 <div style="text-align:right"><div>© ${new Date().getFullYear()} ${esc(f.name)}</div>${credits.length ? `<div class="credit">${L.photos} : ${credits.map(esc).join(', ')}</div>` : ''}</div></div></footer>
@@ -175,8 +194,8 @@ ${info.length ? `<div class="head"><span class="kicker">${L.info}</span><h2>${L.
 }
 
 /** A 1080×1080 social-media post: photo background, strong headline, three benefits, call to action. */
-export function renderPost(c: PostContent, f: Facts, photos: Photo[], themeKey: string, lang: string): string {
-  const t = THEMES[themeKey] ?? THEMES.pro; const p = photos[0];
+export function renderPost(c: PostContent, f: Facts, photos: Photo[], themeKey: string, lang: string, opts: { style?: Style } = {}): string {
+  const t = styled(THEMES[themeKey] ?? THEMES.pro, opts.style); const p = photos[0];
   return `<!doctype html>
 <html lang="${esc(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=1080"><title>${esc(f.name)}</title>
 <link rel="stylesheet" href="${fontLink(t)}">

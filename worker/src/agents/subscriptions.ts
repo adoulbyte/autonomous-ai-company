@@ -11,6 +11,7 @@ import { subscriptionCta } from '../email/cta.js';
 import { findPhotos, tradeProfile } from '../render/photos.js';
 import { factsFromListing, PostContentSchema, renderPost, type PostContent } from '../render/site.js';
 import { screenshotHtml } from '../render/screenshot.js';
+import type { Design } from '../render/edit.js';
 import type { AiGateway } from '../ai/gateway.js';
 
 /**
@@ -37,7 +38,7 @@ async function leadInfo(sql: Sql | Tx, leadId: string): Promise<LeadInfo | null>
 
 /** One social-media visual for this business (AI writes the texts, a real photo of the trade, our designed template). */
 export async function socialPostHtml(o: { ai: Pick<AiGateway, 'generate'>; taskId?: string; env: NodeJS.ProcessEnv; fetchFn?: typeof fetch; lead: LeadInfo;
-  index: number; theme: string; avoid: string[]; feedback?: string[] }): Promise<{ html: string; content: PostContent; model: string }> {
+  index: number; theme: string; avoid: string[]; feedback?: string[] }): Promise<{ html: string; content: PostContent; model: string; design: Design }> {
   const { lead } = o; const profile = tradeProfile(lead.category);
   const res = await o.ai.generate({ roleKey: 'specialist_worker', taskId: o.taskId, tier: 'standard', allowDowngrade: true, schema: PostContentSchema, maxTokens: 1200, temperature: 0.7,
     messages: [{ role: 'user', content: `${skillsFor('production', 'design visual social post copywriting')}
@@ -50,7 +51,8 @@ ${untrusted('business-listing', lead.listing, 2500)}` }] });
   const photos = await findPhotos([...new Set([...res.data.photo_keywords, ...profile.queries])], 6, o.env, o.fetchFn);
   const pick = photos.length ? [photos[o.index % photos.length]] : [];
   const facts = factsFromListing(lead.listing, lead.name, lead.city, lead.email);
-  return { html: renderPost(res.data, facts, pick, profile.theme, lead.lang), content: res.data, model: res.model };
+  const design: Design = { kind: 'post', content: res.data as Record<string, unknown>, facts, photos: pick, theme: profile.theme, lang: lead.lang };
+  return { html: renderPost(res.data, facts, pick, profile.theme, lead.lang), content: res.data, model: res.model, design };
 }
 
 const THEMES = ['what makes this business special (its know-how)', 'a typical product or service, shown appetisingly', 'an invitation to visit or to get in touch',
@@ -165,6 +167,6 @@ export async function produceSocialDeliverable(ctx: Parameters<Handler>[0], proj
   const index = Number(item.key.replace(/\D/g, '') || 1) - 1 + Number(project.cycle ?? 0) * 4;
   const theme = item.instructions.match(/Theme: ([^.]+)/)?.[1] ?? THEMES[index % THEMES.length];
   const r = await socialPostHtml({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn, lead, index, theme, avoid, feedback });
-  return { model: r.model, data: { title: item.title, content: r.html, notes: `Headline: ${r.content.headline}`, limitations: [] as string[] } };
+  return { model: r.model, design: r.design, data: { title: item.title, content: r.html, notes: `Headline: ${r.content.headline}`, limitations: [] as string[] } };
 }
 

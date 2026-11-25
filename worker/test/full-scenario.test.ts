@@ -49,7 +49,24 @@ const ai: Responder = (prompt) => {
   if (prompt.includes('Turn this agreed project scope into a delivery plan')) return { body: { summary: 'Site vitrine', out_of_scope: [],
     requirements: [{ description: 'One-page showcase website', acceptance_criteria: ['Shows the business name', 'Mobile friendly'] }],
     work_items: [{ key: 'site', title: 'Site vitrine', requirement_index: 0, format: 'html', instructions: 'Build the final site.' }] } };
-  if (prompt.includes('The client ordered their one-page website after approving our mockup')) return { body: { ...CONTENT, phone: '04 72 00 00 00' } };
+  if (prompt.includes('The client ordered their one-page website after approving our mockup')) {
+    const texts = JSON.parse(prompt.split('<untrusted_data source="mockup-texts">\n')[1].split('\n</untrusted_data>')[0]);
+    return { body: { ...texts, phone: '04 72 00 00 00' } };
+  }
+  if (prompt.includes('You edit an existing')) {
+    const req = prompt.split('-request">')[1] ?? '';
+    if (req.includes('bleu marine')) return { body: { is_change_request: true, operations: [{ op: 'set_text', path: 'hero_title', value: 'Coiffure & bien-être à Lyon' }, { op: 'set_color', role: 'primary', value: '#1f3a5f' }],
+      changes_for_client: ['Titre remplacé par « Coiffure & bien-être à Lyon »', 'Couleur principale : bleu marine'], unclear_question: null, other_message: null } };
+    if (req.includes('Réserver maintenant')) return { body: { is_change_request: true, operations: [{ op: 'set_text', path: 'cta', value: 'Réserver maintenant' }],
+      changes_for_client: ['Texte du bouton : « Réserver maintenant »'], unclear_question: null, other_message: null } };
+    if (req.includes('visuel 2')) return prompt.includes('creation 2 of') ? { body: { is_change_request: true, operations: [{ op: 'set_text', path: 'headline', value: 'Nouveau : soin kératine' }],
+      changes_for_client: ['Titre du visuel 2 : « Nouveau : soin kératine »'], unclear_question: null, other_message: null } }
+      : { body: { is_change_request: false, operations: [], changes_for_client: [], unclear_question: null, other_message: null } };
+    if (req.includes('plus joli')) return { body: { is_change_request: true, operations: [], changes_for_client: [], unclear_question: 'Que souhaitez-vous changer exactement : les couleurs, les photos ou les textes ?', other_message: null } };
+    return { body: { is_change_request: false, operations: [], changes_for_client: [], unclear_question: null, other_message: null } };
+  }
+  if (prompt.includes('Check a modification of a')) return { body: { exact: true, missing: [], unwanted: [] } };
+  if (prompt.includes('A client replied after we delivered')) return { body: { rating: null, comment: null, permission_to_publish: false, wants_changes: true, change_request: 'see message', reply: 'Merci, c’est noté.' } };
   if (prompt.includes('Produce the complete deliverable')) { genericProduction++; return { status: 500, body: { error: 'should not be used' } }; }
   if (prompt.includes('independent QA reviewer #')) {
     const crit = [...(prompt.split('Acceptance criteria:')[1] ?? '').matchAll(/^\d+\. (.+)$/gm)].map((m) => m[1]);
@@ -95,6 +112,30 @@ describe('full process, from the first email to the delivery', () => {
     expect(l.next_follow_up_at).not.toBeNull();   // a reminder is planned if they do not answer
   }, 120_000);
 
+  it('a precise change on the mockup changes exactly that, nothing else; an unclear request gets a question', async () => {
+    const [before] = await sql`select quote from public.leads`;
+    clientReplies('Re: Votre maquette', 'Bonjour, c’est bien. Pouvez-vous mettre le titre « Coiffure & bien-être à Lyon » et la couleur principale en bleu marine ?');
+    await run('s-2b');
+    const revised = outbox.filter((m) => m.to === CLIENT).at(-1)!;
+    expect(revised.text).toMatch(/Ce que nous avons modifié/);
+    expect(revised.text).toMatch(/bleu marine/);
+    expect(revised.html).toContain('Je veux la réalisation');
+    const [after] = await sql`select quote, stage from public.leads`;
+    const a = (after.quote as { mockup_design: { content: Record<string, unknown>; style: Record<string, string>; photos: unknown[] } }).mockup_design;
+    const b = (before.quote as { mockup_design: { content: Record<string, unknown>; photos: unknown[] } }).mockup_design;
+    expect(a.content.hero_title).toBe('Coiffure & bien-être à Lyon');
+    expect(a.style.primary).toBe('#1f3a5f');
+    expect({ ...a.content, hero_title: null }).toEqual({ ...b.content, hero_title: null });   // every other text identical
+    expect(a.photos).toEqual(b.photos);                                                      // same photos
+    expect((after.quote as { mockup_html: string }).mockup_html).toContain('#1f3a5f');
+    expect(after.stage).toBe('proposal');
+    clientReplies('Re: Votre maquette', 'Faites-le plus joli.');
+    await run('s-2c');
+    expect(outbox.filter((m) => m.to === CLIENT).at(-1)!.text).toMatch(/Que souhaitez-vous changer exactement/);
+    const [same] = await sql`select quote from public.leads`;
+    expect((same.quote as { mockup_html: string }).mockup_html).toBe((after.quote as { mockup_html: string }).mockup_html);   // nothing changed
+  }, 120_000);
+
   it('"build my website" → order closed, reminders stopped, final site built from the approved mockup, double QA', async () => {
     clientReplies('Oui – je lance la réalisation', 'Bonjour,\n\nJe souhaite lancer la réalisation selon votre proposition.\n\nInformations utiles : notre téléphone est le 04 72 00 00 00.');
     await run('s-3');
@@ -110,7 +151,8 @@ describe('full process, from the first email to the delivery', () => {
     const [d] = await sql`select content, status from public.deliverables order by version desc limit 1`;
     expect(d.content).toContain('Salon Coiffure Belle');
     expect(d.content).toContain('04 72 00 00 00');      // the client's information
-    expect(d.content).toContain('Votre style, notre savoir-faire');   // the approved mockup's texts
+    expect(d.content).toContain('Coiffure &amp; bien-être à Lyon');   // the approved mockup, with the changes made before the order
+    expect(d.content).toContain('#1f3a5f');
     expect((await sql`select count(*)::int n from public.qa_reviews where verdict = 'pass'`)[0].n).toBe(2);
     // No "are you still interested?" reminder once they ordered.
     await scheduleDueWork(sql, new Date(Date.now() + 40 * 86_400_000), 'later');
@@ -132,6 +174,22 @@ describe('full process, from the first email to the delivery', () => {
     expect(delivery.attachments!.some((a) => Buffer.from(a.content as Buffer).toString().includes('Salon Coiffure Belle'))).toBe(true);
     expect((await sql`select status from public.projects`)[0].status).toBe('delivered');
   }, 120_000);
+});
+
+describe('changes after the delivery', () => {
+  it('only the requested change is made, the rest is identical, and it is re-delivered without a new invoice', async () => {
+    const [before] = await sql`select design, content from public.deliverables where status = 'delivered' order by version desc limit 1`;
+    clientReplies('Re: Livraison', 'Merci, très bien ! Pourriez-vous remplacer le texte du bouton par « Réserver maintenant » ?');
+    await run('r-1'); await run('r-2');
+    const delivery = outbox.filter((m) => m.to === CLIENT).at(-1)!;
+    expect(delivery.text).toMatch(/version mise à jour/);
+    expect(delivery.text).toMatch(/Réserver maintenant/);
+    const site = delivery.attachments!.map((a) => Buffer.from(a.content as Buffer).toString()).find((x) => x.includes('<html'))!;
+    expect(site).toContain('Réserver maintenant');
+    expect(site.replaceAll('Réserver maintenant', 'X')).toBe(String(before.content).replaceAll(String((before.design as { content: { cta: string } }).content.cta), 'X'));   // nothing else changed
+    expect((await sql`select count(*)::int n from public.invoices`)[0].n).toBe(1);   // no new invoice
+    expect((await sql`select status from public.projects where subscription_id is null`)[0].status).toBe('delivered');
+  }, 180_000);
 });
 
 describe('monthly subscription after the delivery', () => {
@@ -171,6 +229,19 @@ describe('monthly subscription after the delivery', () => {
     expect(delivery.attachments!.filter((a) => a.filename.endsWith('.jpg')).length).toBe(4);
     expect(delivery.text).toMatch(/Arrêter l’abonnement/);
   }, 240_000);
+
+  it('a change on visual 2 changes only visual 2', async () => {
+    const [p] = await sql`select id from public.projects where subscription_id is not null`;
+    const before = await sql`select work_item, content from public.deliverables where project_id = ${p.id} and status = 'delivered' order by work_item`;
+    clientReplies('Re: Livraison', 'Bonjour, sur le visuel 2, pouvez-vous mettre le titre « Nouveau : soin kératine » ?');
+    await run('v-1'); await run('v-2');
+    const after = await sql`select distinct on (work_item) work_item, content, status from public.deliverables where project_id = ${p.id} order by work_item, version desc`;
+    for (const [i, a] of after.entries()) {
+      if (a.work_item === 'post-2') { expect(a.content).toContain('Nouveau : soin kératine'); expect(a.content).not.toBe(before[i].content); }
+      else expect(a.content).toBe(before[i].content);
+    }
+    expect(after.every((a) => a.status === 'delivered')).toBe(true);
+  }, 180_000);
 
   it('an unpaid month pauses the subscription; "stop" ends it', async () => {
     const [s] = await sql`select id from public.subscriptions`;

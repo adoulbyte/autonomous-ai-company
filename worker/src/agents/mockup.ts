@@ -15,6 +15,8 @@ import { renderHtml } from '../email/template.js';
 import { proposalCta } from '../email/cta.js';
 import { renderBrochurePdf } from '../email/brochure.js';
 import { screenshotHtml } from '../render/screenshot.js';
+import { editDesign, type Design } from '../render/edit.js';
+import { enqueue } from '../queue.js';
 import { findPhotos, generatePhoto, tradeProfile } from '../render/photos.js';
 import { factsFromListing, PostContentSchema, renderPost, renderSite, SiteContentSchema, type PostContent, type SiteContent } from '../render/site.js';
 
@@ -59,7 +61,7 @@ export const prospectMockup: Handler = async (ctx) => {
   const a = (l.analysis ?? {}) as { need?: string; language?: string; category?: string; city?: string };
   const lang = a.language ?? 'fr'; const need = a.need === 'website' ? 'website' : 'marketing';
   const [msg] = await ctx.sql`select m.body, m.conversation_id from public.messages m where m.id = ${ctx.task.input.message_id ?? null}`;
-  const { html, content, photos, shots, model } = await buildPreview({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn,
+  const { html, content, photos, shots, model, design } = await buildPreview({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn,
     listing: String(l.listing ?? l.title), name: String(l.buyer_name ?? ''), category: a.category, city: a.city, lang, need, email: l.contact_email, clientMessage: String(msg?.body ?? '') });
   const id = await identity(ctx.sql);
   const cat = await getCatalog(ctx.sql);
@@ -95,7 +97,7 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
     await autoApproveIfPolicy(tx, approvalId);
     await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency}, next_follow_up_at = now() + interval '5 days',
-        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, mockup_photos: photos.filter((x) => !x.url.startsWith('data:')), need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
+        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, mockup_design: design, photos: photos.length, mockup_photos: photos.filter((x) => !x.url.startsWith('data:')), need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
         where id = ${leadId}`;
     if (['contacted', 'engaged'].includes(String(l.stage))) await tx`update public.leads set stage = 'proposal' where id = ${leadId}`;
     return { message_id: out.id, screenshots: !!shots, model };
@@ -153,7 +155,8 @@ ${untrusted('business-listing', listing, 2000)}` }] });
   const problems = staticChecks(html, 'html').filter((i) => need === 'website' || !/viewport/.test(i));
   if (problems.length) throw new Error(`mockup failed static checks: ${problems.join('; ').slice(0, 300)}`);
   const shots = await screenshotHtml(html, env, need === 'website' ? 'site' : 'post');
-  return { html, content: res.data, photos, shots, model: res.model };
+  const design: Design = { kind: need === 'website' ? 'site' : 'post', content: res.data as Record<string, unknown>, facts, photos, theme: profile.theme, lang };
+  return { html, content: res.data, photos, shots, model: res.model, design };
 }
 
 const REMIND: Record<string, { intro: (name: string) => string; again: string; last: string }> = {
@@ -222,5 +225,90 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     await tx`update public.leads set quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ reminders: n, last_reminder_at: new Date().toISOString() } as never)},
         next_follow_up_at = ${n < MAX_PROPOSAL_REMINDERS ? new Date(Date.now() + 21 * 86_400_000) : null} where id = ${leadId}`;
     return { reminder: n, screenshots: !!shots };
+  });
+};
+
+
+/** The design of a mockup (older mockups, sent before designs were stored, are rebuilt from their texts and photos). */
+export function mockupDesign(q: Record<string, unknown>, lead: { listing: string; name: string; city?: string | null; email?: string | null; category?: string | null; lang: string }): Design | null {
+  if (q.mockup_design) return q.mockup_design as Design;
+  if (!q.mockup_content) return null;
+  const photos = (q.mockup_photos as Design['photos'] | undefined)?.length ? q.mockup_photos as Design['photos']
+    : [...new Set([...String(q.mockup_html ?? '').matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]))].map((url) => ({ url, thumb: url, credit: null }));
+  return { kind: q.need === 'marketing' ? 'post' : 'site', content: q.mockup_content as Record<string, unknown>, facts: factsFromListing(lead.listing, lead.name, lead.city, lead.email),
+    photos, theme: tradeProfile(lead.category).theme, lang: lead.lang };
+}
+
+const REVISED: Record<string, { intro: string; changed: string; other: string; subject: string }> = {
+  fr: { intro: 'Bonjour,\n\nC’est fait : voici votre maquette avec les modifications demandées (aperçu ci-dessous).', changed: 'Ce que nous avons modifié :', other: 'Pour le reste de votre message, nous vous répondons séparément.', subject: 'Votre maquette modifiée' },
+  en: { intro: 'Hello,\n\nDone: here is your mockup with the changes you asked for (preview below).', changed: 'What we changed:', other: 'We will answer the rest of your message separately.', subject: 'Your updated mockup' },
+  nl: { intro: 'Goedendag,\n\nKlaar: hier is uw voorbeeld met de gevraagde wijzigingen (hieronder).', changed: 'Wat we hebben aangepast:', other: 'Op de rest van uw bericht antwoorden we apart.', subject: 'Uw aangepaste voorbeeld' },
+  pt: { intro: 'Olá,\n\nFeito: eis a sua maquete com as alterações pedidas (abaixo).', changed: 'O que alterámos:', other: 'Respondemos ao resto da sua mensagem em separado.', subject: 'A sua maquete alterada' },
+};
+export const MAX_MOCKUP_REVISIONS = 6;
+
+/** lead.revise_mockup — the prospect asks for a change on the free mockup: exactly that change, same design, sent back with the same buttons. */
+export const reviseMockup: Handler = async (ctx) => {
+  const leadId = String(ctx.task.input.lead_id); const messageId = String(ctx.task.input.message_id);
+  const [l] = await ctx.sql`select l.*, o.description as listing, o.analysis, o.buyer_name, k.email as contact_email
+      from public.leads l join public.opportunities o on o.id = l.opportunity_id left join public.contacts k on k.id = l.contact_id where l.id = ${leadId}`;
+  const [msg] = await ctx.sql`select subject, body, conversation_id from public.messages where id = ${messageId}`;
+  if (!l || !msg) throw new PermanentError('lead or message not found');
+  const q = (l.quote ?? {}) as Record<string, unknown>;
+  const a = (l.analysis ?? {}) as { language?: string; category?: string; city?: string };
+  const lang = a.language ?? 'fr';
+  const design = mockupDesign(q, { listing: String(l.listing ?? ''), name: String(l.buyer_name ?? ''), city: a.city, email: l.contact_email, category: a.category, lang });
+  const respond = () => finish(ctx, async (tx) => {
+    await enqueue(tx, { type: 'lead.respond', key: `respond:${messageId}`, role: 'negotiation_agent', entityType: 'lead', entityId: leadId,
+      input: { lead_id: leadId, message_id: messageId }, priority: 82, title: `Respond to client: ${String(msg.subject ?? '').slice(0, 70)}`, timeoutSeconds: 220 });
+    return { routed: 'negotiation' };
+  });
+  if (!design || Number(q.mockup_revisions ?? 0) >= MAX_MOCKUP_REVISIONS) return respond();
+  const r = await editDesign({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn, design, from: 'client', request: `Subject: ${msg.subject ?? ''}\n\n${msg.body}` });
+  if (r.kind === 'not_change') return respond();
+  const id = await identity(ctx.sql);
+  const t = REVISED[lang] ?? REVISED.en; const m = MAIL[lang] ?? MAIL.en;
+  if (r.kind === 'question') {
+    return finish(ctx, async (tx) => {
+      const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, generated_by_task, idempotency_key)
+          values (${msg.conversation_id}, 'outbound', 'draft', ${l.contact_email}, ${'Re: ' + String(msg.subject ?? t.subject).replace(/^(re:\s*)+/i, '')}, ${`${lang === 'fr' ? 'Bonjour,' : 'Hello,'}\n\n${r.question}`},
+            ${renderHtml(`${lang === 'fr' ? 'Bonjour,' : 'Hello,'}\n\n${r.question}`, id, {})}, ${ctx.task.id}, ${'revise-q:' + messageId}) on conflict (idempotency_key) do nothing returning id`;
+      if (out) {
+        const approvalId = await requestApproval(tx, { actionType: 'message.send', title: `Question sur la modification : ${String(l.title).slice(0, 70)}`, requestedBy: 'specialist_worker',
+          reason: 'The change request is ambiguous: we ask instead of guessing.', riskLevel: 'low', ifApproved: 'The question is emailed.', ifRejected: 'Nothing is sent.',
+          entityType: 'message', entityId: out.id, taskId: ctx.task.id, key: `message.send:${out.id}`, payload: { message_id: out.id } });
+        await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
+        await autoApproveIfPolicy(tx, approvalId);
+      }
+      return { question: true };
+    });
+  }
+  const shots = await screenshotHtml(r.html, ctx.env, r.design.kind === 'site' ? 'site' : 'post');
+  const body = [t.intro, `${t.changed}\n${r.changes.map((c) => `- ${c}`).join('\n')}`, ...(r.other_message ? [t.other] : [])].join('\n\n');
+  const imgs = shots ? `<div style="margin:6px 0 18px"><div style="font-size:12px;color:#6b6f78;margin-bottom:8px">${m.preview}</div>
+<img src="cid:mockup-desktop" alt="" width="544" style="display:block;width:100%;max-width:544px;border:1px solid #e7e4dd;border-radius:8px;margin-bottom:12px">
+${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display:block;width:220px;border:1px solid #e7e4dd;border-radius:12px">' : ''}</div>` : '';
+  const attachments = [
+    ...(shots ? [{ filename: 'apercu-ordinateur.jpg', content_b64: shots.desktop.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-desktop' }] : []),
+    ...(shots?.mobile ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
+  ];
+  const html = renderHtml(body, id, { preheader: t.subject, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, r.design.kind === 'site' ? 'website' : 'marketing') });
+  return finish(ctx, async (tx) => {
+    const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
+        values (${msg.conversation_id}, 'outbound', 'draft', ${l.contact_email}, ${'Re: ' + String(msg.subject ?? t.subject).replace(/^(re:\s*)+/i, '')}, ${body}, ${html},
+          ${tx.json(attachments as never)}, ${ctx.task.id}, ${'revise:' + messageId}) on conflict (idempotency_key) do nothing returning id`;
+    if (!out) return { skipped: 'already sent' };
+    const approvalId = await requestApproval(tx, { actionType: 'message.send', title: `Maquette modifiée : ${String(l.title).slice(0, 80)}`, requestedBy: 'specialist_worker',
+      reason: 'The prospect asked for precise changes; they were applied to the same design and verified independently.', riskLevel: 'low',
+      ifApproved: 'The updated mockup is emailed.', ifRejected: 'Nothing is sent.', entityType: 'message', entityId: out.id, taskId: ctx.task.id,
+      key: `message.send:${out.id}`, payload: { message_id: out.id } });
+    await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
+    await autoApproveIfPolicy(tx, approvalId);
+    await tx`update public.leads set next_follow_up_at = now() + interval '5 days', quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_design: r.design, mockup_html: r.html,
+        mockup_content: r.design.content, mockup_photos: r.design.photos.filter((x) => !x.url.startsWith('data:')), mockup_revisions: Number(q.mockup_revisions ?? 0) + 1,
+        last_changes: r.diff } as never)} where id = ${leadId}`;
+    if (r.other_message) await enqueue(tx, { type: 'lead.respond', key: `respond:${messageId}`, role: 'negotiation_agent', entityType: 'lead', entityId: leadId,
+      input: { lead_id: leadId, message_id: messageId }, priority: 82, title: 'Respond to the rest of the message', timeoutSeconds: 220 });
+    return { revised: true, changes: r.diff.length, model: r.model };
   });
 };

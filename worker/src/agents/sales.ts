@@ -264,6 +264,11 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
         // A prospect who said yes to the free preview: build the personalised mockup and send it with the quote and the brochure.
         await enqueue(tx, { type: 'lead.mockup', key: `mockup:${m.lead_id}`, role: 'specialist_worker', entityType: 'lead', entityId: String(m.lead_id),
           input: { lead_id: m.lead_id, message_id: id }, priority: 83, title: `Free preview: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 420 });
+      } else if (!go && ldq?.quote?.mockup_sent_at && ['proposal', 'negotiating', 'engaged'].includes(String(ld?.stage))) {
+        // A reply to the mockup: a requested change is applied precisely to the same design (anything else goes to the sales agent).
+        await tx`update public.leads set next_follow_up_at = null where id = ${m.lead_id} and stage = 'proposal'`;
+        await enqueue(tx, { type: 'lead.revise_mockup', key: `revise:${id}`, role: 'specialist_worker', entityType: 'lead', entityId: String(m.lead_id),
+          input: { lead_id: m.lead_id, message_id: id }, priority: 83, title: `Mockup change request: ${String(m.subject ?? '').slice(0, 60)}`, timeoutSeconds: 360 });
       } else {
         // The conversation is active again: no "are you still interested?" reminder while we are talking with the client.
         await tx`update public.leads set next_follow_up_at = null where id = ${m.lead_id} and stage = 'proposal'`;
