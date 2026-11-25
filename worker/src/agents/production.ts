@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { factsFromListing, renderSite, SiteContentSchema, type SiteContent } from '../render/site.js';
 import { tradeProfile, type Photo } from '../render/photos.js';
+import { screenshotHtml } from '../render/screenshot.js';
+import { produceSocialDeliverable } from './subscriptions.js';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
@@ -27,7 +29,7 @@ const PlanSchema = z.object({
     key: z.string().regex(/^[a-z0-9][a-z0-9_-]{1,40}$/),
     title: z.string().min(3).max(160),
     requirement_index: z.number().int().min(0),
-    format: z.enum(['markdown', 'code', 'json', 'text', 'html', 'csv', 'pdf', 'spreadsheet', 'svg']),
+    format: z.enum(['markdown', 'code', 'json', 'text', 'html', 'csv', 'pdf', 'spreadsheet', 'svg', 'social']),
     instructions: z.string().min(10).max(2000),
   })).min(1).max(8),
   out_of_scope: z.array(z.string().max(300)).max(10),
@@ -99,7 +101,8 @@ export const produceDeliverable: Handler = async (ctx) => {
 
   // A website ordered after a mockup: the final site is built from the mockup the client approved (same design and photos),
   // with the texts updated from what the client sent us. Same engine as the mockup, so the result matches what they saw.
-  const fromMockup = item.format === 'html' && p.lead_id ? await siteFromMockup(ctx, String(p.lead_id), feedback) : null;
+  const fromMockup = item.format === 'social' ? await produceSocialDeliverable(ctx, p, item, feedback)
+    : item.format === 'html' && p.lead_id ? await siteFromMockup(ctx, String(p.lead_id), feedback) : null;
   const res: { data: z.infer<typeof DeliverableSchema>; model: string } = fromMockup ?? await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
     messages: [{ role: 'user', content: `${skillsFor('production', `${item.format} ${item.title} ${item.instructions}`)}
 
@@ -149,6 +152,11 @@ export async function deliverableFile(d: Record<string, unknown>, i: number, pro
     case 'spreadsheet': return { filename: `${base}.csv`, content_b64: excelCsv(text).toString('base64'), contentType: 'text/csv' };
     case 'html': return { filename: `${base}.html`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'text/html' };
     case 'svg': return { filename: `${base}.svg`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'image/svg+xml' };
+    case 'social': {   // a designed square visual: delivered as a JPEG ready to post
+      const shot = await screenshotHtml(text, process.env, 'post');
+      return shot ? { filename: `${base}.jpg`, content_b64: shot.desktop.toString('base64'), contentType: 'image/jpeg' }
+        : { filename: `${base}.html`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'text/html' };
+    }
     default: {
       const ext: Record<string, string> = { markdown: 'md', code: 'txt', json: 'json', text: 'txt', csv: 'csv' };
       return { filename: `${base}.${ext[String(d.format)] ?? 'txt'}`, content_b64: Buffer.from(text, 'utf8').toString('base64'), contentType: 'text/plain' };
@@ -303,7 +311,17 @@ export const prepareDelivery: Handler = async (ctx) => {
     const amount = `${(Number(inv.amount_minor) / 100).toFixed(2)} ${inv.currency}`;
     const pay = await getSetting<PaymentInstructions>(ctx.sql, 'finance.payment_instructions', { enabled: false, text: '', beneficiary: '', iban: '', bic: '', bank: '', reference_hint: '' });
     const full = await tx`select title, content, format from public.deliverables where project_id = ${projectId} and status = 'ready_for_delivery' order by work_item`;
-    const previews = full.map((d) => { const c = String(d.content); const cut = Math.max(400, Math.min(1500, Math.floor(c.length * 0.25)));
+    // Visuals are previewed as small watermarked images; documents as a partial text extract.
+    const shots: { filename: string; content_b64: string; contentType: string; cid: string }[] = [];
+    for (const [i, d] of full.entries()) {
+      if (d.format !== 'social') continue;
+      const marked = String(d.content).replace('</body>', `<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><span style="font:800 150px Arial;color:rgba(255,255,255,.55);transform:rotate(-28deg);letter-spacing:8px">${fr ? 'APERÇU' : 'PREVIEW'}</span></div></body>`);
+      const shot = await screenshotHtml(marked, ctx.env, 'post');
+      if (shot) shots.push({ filename: `apercu-${i + 1}.jpg`, content_b64: shot.desktop.toString('base64'), contentType: 'image/jpeg', cid: `preview-${i + 1}` });
+    }
+    const visualPreview = shots.length ? `<div style="margin:8px 0 16px">${shots.map((x) => `<img src="cid:${x.cid}" alt="" width="250" style="display:inline-block;width:250px;max-width:46%;margin:0 8px 8px 0;border:1px solid #e7e4dd;border-radius:8px">`).join('')}
+<div style="font-size:12px;color:#6b6f78">${fr ? 'Aperçu filigrané — les visuels en haute qualité, sans filigrane, sont envoyés dès réception du paiement.' : 'Watermarked preview — full-quality visuals are sent as soon as payment is received.'}</div></div>` : '';
+    const previews = visualPreview + full.filter((d) => d.format !== 'social').map((d) => { const c = String(d.content); const cut = Math.max(400, Math.min(1500, Math.floor(c.length * 0.25)));
       return previewBlock(String(d.title), c.slice(0, cut) + (c.length > cut ? '\n…' : ''), fr ? `Aperçu de ${Math.round((cut / c.length) * 100)} % — version complète envoyée dès réception du paiement. Validé par deux contrôles qualité indépendants.` : `Preview of ${Math.round((cut / c.length) * 100)}% — full version released on payment. Passed two independent quality reviews.`); }).join('');
     const [client] = await tx`select co.name from public.clients cl join public.companies co on co.id = cl.company_id where cl.id = ${p.client_id}`;
     const pdf = await renderInvoicePdf({ number: inv.number, issue_date: String(inv.issue_date instanceof Date ? inv.issue_date.toISOString().slice(0, 10) : inv.issue_date),
@@ -316,7 +334,7 @@ export const prepareDelivery: Handler = async (ctx) => {
       ? `Bonjour,\n\nBonne nouvelle : le travail pour « ${p.name} » est terminé et a été validé par notre contrôle qualité indépendant (${dels.length} livrable${dels.length > 1 ? 's' : ''}) :\n\n${manifest}\n\nVous trouverez ci-dessous un aperçu, et en pièce jointe la facture ${inv.number} : ${amount}, à régler avant le ${due}.\nLes fichiers complets vous sont envoyés automatiquement dès réception du paiement.`
       : `Hello,\n\nGood news: the work for "${p.name}" is complete and has passed our independent quality review (${dels.length} deliverable${dels.length > 1 ? 's' : ''}):\n\n${manifest}\n\nInvoice ${inv.number}: ${amount}, due ${due}.\nThe deliverables are released automatically as soon as payment is received.\n\nThis message was prepared by an AI-assisted business system.`;
     const html = renderHtml(body, id, { preheader: fr ? 'Votre projet est prêt — aperçu à l’intérieur' : `Your project is ready — preview inside`, blocks: previews });
-    const attachments = [{ filename: `${inv.number}.pdf`, content_b64: pdf.toString('base64'), contentType: 'application/pdf' }];
+    const attachments = [{ filename: `${inv.number}.pdf`, content_b64: pdf.toString('base64'), contentType: 'application/pdf' }, ...shots];
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
         values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Facture ' : 'Invoice ') + inv.number + ' — ' + p.name}, ${body}, ${html}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'payreq:' + projectId + ':' + inv.id}) returning id`;
     const approvalId = await requestApproval(tx, {
@@ -364,8 +382,10 @@ export const deliverProject: Handler = async (ctx) => {
       : free
       ? `Hello,\n\nAs promised, please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}), free of charge. Each one passed two independent quality reviews.\n\nIf anything needs adjusting, just reply and we will fix it.\n\nWhen you have a moment, we would really value your honest feedback: a rating from 1 to 5 and a few words on what worked and what could be better. If you are happy for us to mention you as a reference, just say so — we will never publish anything without your explicit agreement.`
       : `Hello,\n\nThank you for your payment. Please find attached the complete deliverables for "${p.name}" (${dels.length} file${dels.length > 1 ? 's' : ''}).\n\nIf anything needs adjustment within the agreed scope, simply reply to this email.`;
+    const stop = p.subscription_id ? (fr ? `\n\nVos visuels du mois sont prêts à publier. Le mois prochain, nous vous préparons de nouveaux visuels. Pour arrêter l’abonnement, répondez simplement « Arrêter l’abonnement » : c’est immédiat.`
+      : `\n\nYour visuals for this month are ready to post. Next month we will prepare new ones. To stop the subscription, simply reply "Stop my subscription": it is immediate.`) : '';
     const [msg] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, attachments, generated_by_task, idempotency_key)
-        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Livraison : ' : 'Delivery: ') + p.name}, ${files.length ? shortBody : body}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
+        values (${conv.id}, 'outbound', 'draft', ${p.contact_email}, ${(fr ? 'Livraison : ' : 'Delivery: ') + p.name}, ${(files.length ? shortBody : body) + stop}, ${tx.json(files as never)}, ${ctx.task.id}, ${'delivery:' + projectId + ':' + ctx.task.id}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'delivery.send', title: `Livraison : ${String(p.name).slice(0, 90)}`, requestedBy: 'project_manager',
       reason: 'Invoice paid; releasing QA-approved deliverables.', evidence: dels.map((d) => ({ deliverable: d.title })),

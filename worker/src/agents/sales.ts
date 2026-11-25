@@ -7,7 +7,8 @@ import { getSetting, logEvent } from '../db.js';
 import { skillsFor } from '../skills.js';
 import { getMode, isPilot } from '../mode.js';
 import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
-import { isGoReply, isLaterReply, isInterestedReply } from '../email/cta.js';
+import { isGoReply, isLaterReply, isInterestedReply, isSubscribeReply, isSubscriptionDecline, isSubscriptionStop } from '../email/cta.js';
+import { startSubscription, stopSubscriptions } from './subscriptions.js';
 
 const EmailReviewSchema = z.object({ score: z.number().min(0).max(10), issues: z.array(z.string().max(300)).max(10), verdict: z.enum(['send', 'rewrite']) });
 
@@ -201,11 +202,18 @@ export const triageMessage: Handler = async (ctx) => {
   // A plain STOP / unsubscribe reply is always honoured, without depending on any AI model.
   const optOut = /^\s*(stop|unsubscribe|remove me|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir)|afmelden|uitschrijven|cancelar|remover|n[ãa]o quero)/i.test(String(m.body)) || /^\s*(re:\s*)?stop\b/i.test(String(m.subject ?? ''));
   const interested = !optOut && isInterestedReply(String(m.subject ?? ''));
+  const subscribe = !optOut && !!m.lead_id && isSubscribeReply(String(m.subject ?? ''));
+  const subDecline = !optOut && !!m.lead_id && isSubscriptionDecline(String(m.subject ?? ''));
+  const subStop = !optOut && !!m.lead_id && !subscribe && isSubscriptionStop(String(m.subject ?? ''), String(m.body ?? ''));
+  const subRule = subscribe || subDecline || subStop;
   const go = !optOut && isGoReply(String(m.subject ?? ''));
   const [ldq] = m.lead_id ? await ctx.sql`select quote from public.leads where id = ${m.lead_id}` : [];
   const later = !optOut && !go && !!(ldq?.quote as { mockup_sent_at?: string } | null)?.mockup_sent_at && isLaterReply(String(m.subject ?? ''), String(m.body ?? ''));
   const res = optOut
     ? { model: 'rule:opt-out', data: { category: 'prospect_reply', intent: 'unsubscribe', priority: 'normal', summary: 'Opt-out request (STOP)', reply_draft: null } as z.infer<typeof TriageSchema> }
+    : subRule
+    ? { model: 'rule:subscription', data: { category: 'client', intent: subscribe ? 'positive' : 'negative', priority: 'normal',
+        summary: subscribe ? 'Subscribes to the monthly pack' : subStop ? 'Stops the monthly subscription' : 'Declines the monthly pack', reply_draft: null } as z.infer<typeof TriageSchema> }
     : go
     ? { model: 'rule:go-button', data: { category: 'prospect_reply', intent: 'positive', priority: 'high', summary: 'The prospect asks us to start the work (button)', reply_draft: null } as z.infer<typeof TriageSchema> }
     : later
@@ -224,11 +232,17 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
   return finish(ctx, async (tx) => {
     await tx`update public.messages set classification = ${tx.json({ ...d, model: res.model } as never)}, priority = ${injection ? 'high' : d.priority},
         injection_suspected = ${injection} where id = ${id}`;
-    if (d.intent === 'unsubscribe' && m.from_addr) {
+    if (subRule) {
+      if (subscribe) await startSubscription(tx, String(m.lead_id));
+      else if (subStop) { await stopSubscriptions(tx, String(m.lead_id), 'stopped by the client'); await logEvent(tx, 'lead', String(m.lead_id), 'subscription_stopped', 'The client stopped the monthly subscription'); }
+      else await tx`update public.leads set quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ subscription_declined_at: new Date().toISOString() } as never)} where id = ${m.lead_id}`;
+    } else if (d.intent === 'unsubscribe' && m.from_addr) {
       // Opt-out is permanent, whichever conversation it arrives in.
       await tx`update public.contacts set do_not_contact = true where lower(email) = lower(${m.from_addr})`;
       await tx`update public.leads set stage = 'lost', lost_reason = 'unsubscribed' where stage in ('contacted','engaged','proposal','negotiating','qualified','new')
           and contact_id in (select id from public.contacts where lower(email) = lower(${m.from_addr}))`;
+      await tx`update public.subscriptions set status = 'cancelled', cancelled_at = now(), paused_reason = 'client asked not to be contacted' where status <> 'cancelled'
+          and lead_id in (select l.id from public.leads l join public.contacts c on c.id = l.contact_id where lower(c.email) = lower(${m.from_addr}))`;
       await logEvent(tx, 'message', id, 'unsubscribed', `${m.from_addr} asked not to be contacted again: honoured permanently`);
     } else if (injection) {
       await logEvent(tx, 'message', id, 'injection_suspected', `Inbound message from ${m.from_addr ?? 'unknown'} looks like a prompt-injection attempt — no automatic reply`, {}, 'warning');

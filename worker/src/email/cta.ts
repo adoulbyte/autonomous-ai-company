@@ -93,3 +93,27 @@ export function isLaterReply(subject: string, body = ''): boolean {
   return /^\s*(re:\s*)?(peut-être plus tard|maybe later|misschien later|talvez mais tarde)\b/i.test(subject)
     || (body.trim().length < 300 && /\b(plus tard|pas le bon moment|pas maintenant|not now|later on|maybe later|niet nu|mais tarde)\b/i.test(body) && !/\b(stop|pas intéress|not interested)\b/i.test(body));
 }
+
+/** Buttons under the monthly-pack offer; the "stop" reply is accepted at any time. */
+const S: Record<string, { yes: (price: string) => string; no: string; subjYes: string; subjNo: string; bodyYes: string; bodyNo: string }> = {
+  fr: { yes: (p) => `Je m’abonne – ${p} par mois`, no: 'Non merci', subjYes: 'Abonnement – je m’abonne', subjNo: 'Abonnement – non merci',
+        bodyYes: 'Bonjour,\n\nJe souhaite m’abonner au pack visuels mensuel.\n\nMes souhaits (facultatif : thèmes, produits à mettre en avant, couleurs…) :\n\n', bodyNo: 'Bonjour,\n\nMerci, pas pour le moment.\n' },
+  en: { yes: (p) => `Subscribe – ${p} a month`, no: 'No thanks', subjYes: 'Subscription – subscribe', subjNo: 'Subscription – no thanks',
+        bodyYes: 'Hello,\n\nI would like to subscribe to the monthly visuals pack.\n\nMy wishes (optional: themes, products to highlight, colours…):\n\n', bodyNo: 'Hello,\n\nThank you, not for now.\n' },
+  nl: { yes: (p) => `Ik neem het abonnement – ${p} per maand`, no: 'Nee, bedankt', subjYes: 'Abonnement – ik neem het', subjNo: 'Abonnement – nee bedankt',
+        bodyYes: 'Goedendag,\n\nIk neem graag het maandelijkse visualpakket.\n\nMijn wensen (optioneel):\n\n', bodyNo: 'Goedendag,\n\nBedankt, nu niet.\n' },
+  pt: { yes: (p) => `Quero assinar – ${p} por mês`, no: 'Não, obrigado', subjYes: 'Assinatura – quero assinar', subjNo: 'Assinatura – não obrigado',
+        bodyYes: 'Olá,\n\nGostaria de assinar o pack mensal de visuais.\n\nOs meus desejos (opcional):\n\n', bodyNo: 'Olá,\n\nObrigado, por agora não.\n' },
+};
+export function subscriptionCta(mailbox: string, lang: string, price: string): Cta {
+  const s = S[lang] ?? S.en;
+  const mailto = (subject: string, b: string) => `mailto:${mailbox}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(b)}`;
+  return { yes: { label: s.yes(price), href: mailto(s.subjYes, s.bodyYes) }, no: { label: s.no, href: mailto(s.subjNo, s.bodyNo) } };
+}
+export const isSubscribeReply = (subject: string) => /abonnement – je m’abonne|abonnement - je m'abonne|subscription – subscribe|abonnement – ik neem het|assinatura – quero assinar/i.test(subject.replace(/'/g, '’').replace(/ - /g, ' – '));
+export const isSubscriptionDecline = (subject: string) => /abonnement – non merci|subscription – no thanks|abonnement – nee bedankt|assinatura – não obrigado/i.test(subject.replace(/ - /g, ' – '));
+/** "Stop my subscription": the subject of the button in the monthly emails, or a short message saying so. */
+export function isSubscriptionStop(subject: string, body = ''): boolean {
+  const re = /arr[êe]ter (l[’']|mon )abonnement|r[ée]silier|stop (the |my )?subscription|cancel (the |my )?subscription|abonnement stoppen|opzeggen|cancelar a assinatura/i;
+  return re.test(subject) || (body.trim().length < 400 && re.test(body));
+}

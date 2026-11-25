@@ -15,7 +15,7 @@ async function load() {
     const { count, error } = await b; if (error) throw new Error(error.message); return count ?? 0;
   };
   const today = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
-  const [fin, found, foundToday, sentTotal, sentToday, replies, activeProjects, delivered, sent, worker, base, mode, reviews] = await Promise.all([
+  const [fin, found, foundToday, sentTotal, sentToday, replies, activeProjects, delivered, sent, worker, base, mode, reviews, subs] = await Promise.all([
     q<Row[]>(supabase.from('v_finance_by_currency').select('*')),
     count('opportunities'),
     count('opportunities', (b) => b.gte('discovered_at', today)),
@@ -36,8 +36,9 @@ async function load() {
     q<Row[]>(supabase.from('settings').select('value').eq('key', 'finance.base_currency')),
     q<Row[]>(supabase.from('settings').select('value').eq('key', 'business.mode')),
     q<Row[]>(supabase.from('client_feedback').select('rating').not('rating', 'is', null)),
+    q<Row[]>(supabase.from('subscriptions').select('status, price_minor, currency')),
   ]);
-  return { fin, found, foundToday, sentTotal, sentToday, replies, activeProjects, delivered, sent, worker: worker[0], reviews,
+  return { fin, found, foundToday, sentTotal, sentToday, replies, activeProjects, delivered, sent, worker: worker[0], reviews, subs,
     base: (base[0]?.value as string) ?? 'EUR', pilot: (mode[0]?.value as Row | undefined)?.mode === 'free_pilot' };
 }
 
@@ -62,6 +63,8 @@ export function CommandCenter() {
         <Link to="/communications" style={{ color: 'inherit', textDecoration: 'none' }}><Stat label="Nouvelles réponses de prospects" value={num(data.replies.unread)} accent={data.replies.unread > 0} sub={`${data.replies.total} au total · cliquer pour lire`} /></Link>
         <Stat label="Projets" value={num(data.activeProjects)} sub={`${data.delivered} livrés`} />
         <Stat label="Avis clients" value={avg ? `${avg} / 5` : '—'} sub={`${data.reviews.length} avis`} />
+        <Stat label="Abonnements actifs" value={num(data.subs.filter((x) => x.status === 'active').length)}
+          sub={`${money(data.subs.filter((x) => x.status === 'active').reduce((a, x) => a + Number(x.price_minor), 0), data.base)} / mois${data.subs.some((x) => x.status === 'paused') ? ` · ${data.subs.filter((x) => x.status === 'paused').length} en pause (impayé)` : ''}`} />
         <Stat label="Encaissé" value={money(f.confirmed_revenue_minor, data.base)} sub={`${money(f.receivable_minor, data.base)} en attente`} />
       </div>
       <CycleStatus />

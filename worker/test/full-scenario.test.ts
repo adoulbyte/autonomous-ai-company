@@ -33,7 +33,7 @@ const CONTENT = { tagline: 'Coiffure · Lyon', hero_title: 'Votre style, notre s
   about_title: 'Un salon de quartier', about_text: 'Nous accueillons chaque client avec attention, pour un moment de détente et un résultat qui dure.\n\nConseils personnalisés et produits choisis.',
   highlights: [{ title: 'Écoute', text: 'Des conseils adaptés.' }, { title: 'Qualité', text: 'Des produits choisis.' }, { title: 'Proximité', text: 'Au cœur du quartier.' }],
   cta_title: 'Envie de changement ?', cta_text: 'Écrivez-nous.', photo_keywords: ['hair salon'] };
-let genericProduction = 0; let goHintSeen = false;
+let genericProduction = 0; let goHintSeen = false; let posts = 0;
 const ai: Responder = (prompt) => {
   if (prompt.includes('B2B prospecting')) return { body: { subject: 'Votre salon à Lyon', claims_made: [], questions_for_buyer: [],
     body: 'Bonjour,\n\nVotre salon apparaît sur une fiche publique avec votre adresse professionnelle, mais sans site internet. Vos clients cherchent souvent vos horaires et vos prestations sur leur téléphone.\n\nNous pouvons vous préparer une maquette de site, sans engagement, pour que vous voyiez le résultat avant toute décision.\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.' } };
@@ -51,8 +51,12 @@ const ai: Responder = (prompt) => {
     work_items: [{ key: 'site', title: 'Site vitrine', requirement_index: 0, format: 'html', instructions: 'Build the final site.' }] } };
   if (prompt.includes('The client ordered their one-page website after approving our mockup')) return { body: { ...CONTENT, phone: '04 72 00 00 00' } };
   if (prompt.includes('Produce the complete deliverable')) { genericProduction++; return { status: 500, body: { error: 'should not be used' } }; }
-  if (prompt.includes('independent QA reviewer #')) return { body: { criteria_results: [
-    { criterion: 'Shows the business name', met: true, evidence: 'Salon Coiffure Belle' }, { criterion: 'Mobile friendly', met: true, evidence: 'viewport' }], issues: [], summary: 'OK' } };
+  if (prompt.includes('independent QA reviewer #')) {
+    const crit = [...(prompt.split('Acceptance criteria:')[1] ?? '').matchAll(/^\d+\. (.+)$/gm)].map((m) => m[1]);
+    return { body: { criteria_results: crit.map((c) => ({ criterion: c, met: true, evidence: 'checked' })), issues: [], summary: 'OK' } };
+  }
+  if (prompt.includes('Write the texts of ONE social-media post')) { posts++;
+    return { body: { headline: `Idée coiffure n°${posts}`, text: 'Une coupe qui vous ressemble, au cœur de Lyon.', bullets: ['Conseils personnalisés', 'Produits choisis'], cta: 'Prenez rendez-vous', photo_keywords: ['hair salon'] } }; }
   if (prompt.includes('Classify this inbound message')) return { body: { category: 'prospect_reply', intent: 'neutral', priority: 'normal', summary: 'reply', reply_draft: null } };
   return { status: 500, body: { error: 'unexpected prompt' } };
 };
@@ -128,6 +132,60 @@ describe('full process, from the first email to the delivery', () => {
     expect(delivery.attachments!.some((a) => Buffer.from(a.content as Buffer).toString().includes('Salon Coiffure Belle'))).toBe(true);
     expect((await sql`select status from public.projects`)[0].status).toBe('delivered');
   }, 120_000);
+});
+
+describe('monthly subscription after the delivery', () => {
+  it('offers the monthly pack with a sample visual a few days after the delivery', async () => {
+    await sql`update public.projects set delivered_at = now() - interval '4 days'`;
+    const before = outbox.length;
+    await run('s-7');
+    const offer = outbox.slice(before).find((m) => m.to === CLIENT);
+    expect(offer).toBeDefined();
+    expect(offer!.html).toContain('Je m’abonne');
+    expect(offer!.html).toContain('19 €');
+    expect(offer!.html).toContain('cid:sample-post');
+    await run('s-7b');
+    expect(outbox.slice(before).filter((m) => m.to === CLIENT).length).toBe(1);   // offered once
+  }, 120_000);
+
+  it('"subscribe" → a month of visuals is produced, QA-checked, invoiced with a watermarked preview, then delivered as images after payment', async () => {
+    clientReplies('Abonnement – je m’abonne', 'Bonjour,\n\nJe souhaite m’abonner au pack visuels mensuel.');
+    await run('s-8');
+    await run('s-9');
+    const [s] = await sql`select * from public.subscriptions`;
+    expect(s.status).toBe('active');
+    expect(s.cycles).toBe(1);
+    const [p] = await sql`select * from public.projects where subscription_id = ${s.id}`;
+    expect(p.status).toBe('ready_for_delivery');
+    expect(Number(p.budget_minor)).toBe(1900);
+    expect((await sql`select count(*)::int n from public.deliverables where project_id = ${p.id} and format = 'social'`)[0].n).toBe(4);
+    const [ap] = await sql`select id from public.approvals where action_type = 'payment.request.send' and status = 'pending'`;
+    await asOwner(sql, (tx) => tx`select public.decide_approval(${ap.id}, true, 'ok')`);
+    await run('s-10');
+    const invoice = outbox.filter((m) => m.to === CLIENT).at(-1)!;
+    expect(invoice.html).toContain('cid:preview-1');
+    const [inv] = await sql`select * from public.invoices where project_id = ${p.id}`;
+    await asOwner(sql, (tx) => tx`select * from public.owner_record_payment(${inv.id}, ${inv.amount_minor}, ${inv.currency}, 'bank_transfer', 'REF-2', true, 'statement_line', 'Relevé ligne 2', null, null)`);
+    await run('s-11');
+    const delivery = outbox.filter((m) => m.to === CLIENT).at(-1)!;
+    expect(delivery.attachments!.filter((a) => a.filename.endsWith('.jpg')).length).toBe(4);
+    expect(delivery.text).toMatch(/Arrêter l’abonnement/);
+  }, 240_000);
+
+  it('an unpaid month pauses the subscription; "stop" ends it', async () => {
+    const [s] = await sql`select id from public.subscriptions`;
+    await sql`update public.subscriptions set next_cycle_at = now() - interval '1 minute' where id = ${s.id}`;
+    await run('s-12');   // month 2 starts (month 1 is paid)
+    expect((await sql`select cycles from public.subscriptions`)[0].cycles).toBe(2);
+    await sql`update public.subscriptions set next_cycle_at = now() - interval '1 minute' where id = ${s.id}`;
+    await run('s-13');   // month 2 not paid yet → paused, no month 3
+    const [paused] = await sql`select status, cycles from public.subscriptions`;
+    expect(paused.status).toBe('paused');
+    expect(paused.cycles).toBe(2);
+    clientReplies('Arrêter l’abonnement', 'Bonjour, merci d’arrêter mon abonnement.');
+    await run('s-14');
+    expect((await sql`select status from public.subscriptions`)[0].status).toBe('cancelled');
+  }, 240_000);
 });
 
 describe('safety nets', () => {

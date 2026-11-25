@@ -13,6 +13,7 @@ import { respondToLead } from './agents/negotiation.js';
 import { captureFeedback } from './agents/feedback.js';
 import { marketingReview } from './agents/marketing.js';
 import { prospectMockup, proposalReminder } from './agents/mockup.js';
+import { getPlans, offerSubscription, subscriptionCycle } from './agents/subscriptions.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -43,6 +44,7 @@ export const HANDLERS: Record<string, Handler> = {
   'strategy.review': strategyReview,
   'marketing.review': marketingReview,
   'lead.mockup': prospectMockup, 'lead.proposal_reminder': proposalReminder,
+  'subscription.offer': offerSubscription, 'subscription.cycle': subscriptionCycle,
   'system.health_check': healthCheck,
 };
 
@@ -102,6 +104,20 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
     else if (l.message_id) await enqueue(sql, { type: 'lead.respond', key: `respond:${l.message_id}:after-mockup`, role: 'negotiation_agent', entityType: 'lead', entityId: String(l.id),
       input: { lead_id: l.id, message_id: l.message_id }, priority: 82, title: `Respond to client: ${String(l.title).slice(0, 70)}`, timeoutSeconds: 220 });
   }
+  // Recurring revenue: a few days after a delivery, the monthly pack is offered (once); active subscriptions start a new month when due.
+  const plan = (await getPlans(sql)).social_monthly;
+  const offers = plan ? await sql`select p.lead_id, l.title from public.projects p join public.leads l on l.id = p.lead_id join public.opportunities o on o.id = l.opportunity_id
+      where p.status in ('delivered','accepted','closed') and p.subscription_id is null and o.analysis->>'prospect' = 'true'
+        and coalesce(l.quote->>'subscription_offered_at', '') = '' and not exists (select 1 from public.subscriptions s where s.lead_id = p.lead_id)
+      group by p.lead_id, l.title having max(p.delivered_at) < now() - make_interval(days => ${plan.offer_after_days ?? 3})` : [];
+  for (const o of offers) await enqueue(sql, { type: 'subscription.offer', key: `sub-offer:${o.lead_id}`, role: 'sales_agent', entityType: 'lead', entityId: String(o.lead_id),
+    input: { lead_id: o.lead_id }, priority: 57, title: `Monthly pack offer: ${String(o.title).slice(0, 70)}`, timeoutSeconds: 240 });
+  // A subscription paused for an unpaid month resumes as soon as that month is paid.
+  await sql`update public.subscriptions s set status = 'active', paused_reason = null where s.status = 'paused' and s.paused_reason = 'previous month not paid yet'
+      and (select public.project_is_paid(p.id) from public.projects p where p.subscription_id = s.id order by p.cycle desc nulls last limit 1)`;
+  const months = await sql`select id, cycles from public.subscriptions where status = 'active' and next_cycle_at <= now()`;
+  for (const d of months) await enqueue(sql, { type: 'subscription.cycle', key: `sub-cycle:${d.id}:${Number(d.cycles) + 1}`, role: 'project_manager', entityType: 'subscription', entityId: String(d.id),
+    input: { subscription_id: d.id }, priority: 60, title: `Monthly subscription: month ${Number(d.cycles) + 1}`, timeoutSeconds: 120 });
   // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
   const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
   for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
