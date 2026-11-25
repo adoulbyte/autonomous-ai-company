@@ -2,6 +2,10 @@ name: Test email
 # Sends two sample emails (prospecting + quote with logo) to the owner's address (OWNER_EMAIL secret, never printed).
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'designed (2 sample emails) or plain (one short plain-text email)'
+        default: designed
 permissions: { contents: read }
 jobs:
   send:
@@ -23,3 +27,4 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+          TEST_MODE: ${{ inputs.mode }}

@@ -13,6 +13,13 @@ if (!to || !mail) { console.error('OWNER_EMAIL and the Gmail secrets are require
 const sql = connect(loadConfig().databaseUrl);
 try {
   const id = await getSetting<Identity>(sql, 'business.identity', {} as Identity);
+  if (process.env.TEST_MODE === 'plain') {
+    // Diagnostic: a short plain-text email, no HTML, no link, no button — tells whether content or reputation decides.
+    await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: 'Petite question',
+      text: `Bonjour,\n\nC'est un message de vérification envoyé par ta plateforme, en texte simple.\nPeux-tu me dire s'il est arrivé dans la boîte de réception ou dans les spams ?\n\nMerci,\n${id.signature}` });
+    console.log('plain-text test email sent');
+    process.exit(0);
+  }
   const cat = await getCatalog(sql);
   const cold = `Bonjour,
 
