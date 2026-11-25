@@ -2,7 +2,7 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { getSetting, logEvent, type Sql } from '../db.js';
 import { enqueue } from '../queue.js';
-import { prospectCta, prospectHighlights } from '../email/cta.js';
+import { prospectCta } from '../email/cta.js';
 import { getCatalog } from './pricing.js';
 import { LOGO_CID, logoAttachment, renderHtml, renderText, type Identity } from '../email/template.js';
 import { scrubSecrets } from '../sanitize.js';
@@ -62,8 +62,7 @@ export const sendOutbox: Handler = async (ctx) => {
       if (prospecting && sentOutreach >= 5) continue;   // at most 5 prospecting emails per run; the rest go next cycle
       const cls = (m.classification ?? {}) as { cta?: { lang: string; need?: string } };
       const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql)) : undefined;
-      const highlights = cls.cta ? prospectHighlights(cls.cta.lang, cls.cta.need ?? 'website') : undefined;
-      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, highlights, noImages: prospecting, personal: prospecting });
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, noImages: prospecting });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
         text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments,
