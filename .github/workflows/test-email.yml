@@ -1,0 +1,25 @@
+name: Test email
+# Sends two sample emails (prospecting + quote with logo) to the owner's address (OWNER_EMAIL secret, never printed).
+on:
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: worker/package-lock.json }
+      - run: npm ci
+        working-directory: worker
+      - name: Send test emails
+        working-directory: worker
+        run: npx tsx src/tools/send-test-email.ts
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
