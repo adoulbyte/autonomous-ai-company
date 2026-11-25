@@ -40,12 +40,13 @@ export const respondToLead: Handler = async (ctx) => {
   // A promise is a promise: clients first contacted with the free launch offer keep it, even after the switch to paid mode.
   const promisedFree = await promisedFreeWork(ctx.sql, leadId);
   const pilot = isPilot(mode) || promisedFree;
-  const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
-  const quote = pilot ? 0 : Number(l.value_minor ?? floor);
   const cur = String(l.currency ?? 'EUR');
   const prospect = (l.analysis as { prospect?: boolean; language?: string } | null)?.prospect === true;
   const catalog = prospect && !pilot ? await getCatalog(ctx.sql) : null;
   const menuPrices = catalog ? Object.values(catalog.items).map((i) => i.price_minor) : [];
+  // Fixed-price menu: the floor is the cheapest menu item (an hourly estimate must never block a 49 EUR order).
+  const floor = pilot ? 0 : catalog ? Math.min(...menuPrices) : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
+  const quote = pilot ? 0 : Number(l.value_minor ?? floor);
   const terms = catalog
     ? `- QUICK-SERVICE MENU (fixed prices, ${catalog.currency}, all included):
 ${catalogMenu(catalog, (l.analysis as { language?: string }).language ?? 'fr')}
@@ -68,7 +69,9 @@ ${catalogMenu(catalog, (l.analysis as { language?: string }).language ?? 'fr')}
 You handle the commercial conversation for our company. Read the thread and the client's latest message, then return JSON
 {intent: accept|negotiate|question|decline|other, agreed_price_usd: number|null, scope_summary: string|null, reply: string, asked_if_ai: boolean}.
 - intent=accept ONLY if the client explicitly agrees in writing.
-${terms}
+${ctx.task.input.go_button ? `- The client clicked the button "start the work" under our proposal (mockup + offer): this IS a written order of the proposed item at the listed price.
+  Use intent=accept (unless their message clearly says otherwise), scope_summary = the proposed item, and ask in the reply for what we need (texts, photos, logo, opening hours).
+` : ''}${terms}
 - scope_summary: when accepting or clarifying, a numbered list of exactly what will be delivered (verifiable items), derived from the request and thread.
 - reply: the email we send back (no signature, it is added automatically), written in the same language as the client's latest message, polite and concise.
 - If the client asks whether they talk to an AI or a human, answer truthfully: our company uses AI-assisted production with quality control.
@@ -87,8 +90,13 @@ ${untrusted('thread', thread.map((t) => `[${t.direction}] ${String(t.body).slice
   let reply = d.reply;
   if (intent === 'accept' && agreed < floor) {
     intent = 'negotiate';
-    reply = `Thank you for your reply. To deliver this properly we cannot go below ${(floor / 100).toFixed(0)} USD for the scope discussed. ` +
-      `If the budget is fixed, we can reduce the scope accordingly — just tell us which items matter most.`;
+    const amount = `${(floor / 100).toFixed(0)} ${cur === 'EUR' ? '€' : cur}`;
+    const lang = (l.analysis as { language?: string } | null)?.language ?? 'fr';
+    reply = ({
+      fr: `Merci pour votre réponse. Pour réaliser ce travail correctement, nous ne pouvons pas descendre en dessous de ${amount} pour ce périmètre. Si votre budget est fixe, nous pouvons réduire le contenu : dites-nous simplement ce qui compte le plus pour vous.`,
+      nl: `Bedankt voor uw antwoord. Om dit goed uit te voeren kunnen we niet onder ${amount} gaan voor deze omvang. Is uw budget vast, dan kunnen we de inhoud beperken: laat ons weten wat voor u het belangrijkst is.`,
+      pt: `Obrigado pela sua resposta. Para fazer este trabalho corretamente, não podemos descer abaixo de ${amount} para este âmbito. Se o orçamento for fixo, podemos reduzir o conteúdo: diga-nos o que é mais importante para si.`,
+    } as Record<string, string>)[lang] ?? `Thank you for your reply. To deliver this properly we cannot go below ${amount} for the scope discussed. If the budget is fixed, we can reduce the scope accordingly — just tell us which items matter most.`;
   }
   const autoClose = intent === 'accept' && deals.auto_accept && agreed <= deals.max_auto_accept_minor && !!d.scope_summary;
 

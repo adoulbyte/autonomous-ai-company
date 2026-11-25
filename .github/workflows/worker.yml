@@ -49,6 +49,7 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           WORKER_TIME_BUDGET: '480'
+          WORKER_HARD_LIMIT_SECONDS: '600'   # the job is stopped at 12 min (setup included)
           REPO_PRIVATE: ${{ github.event.repository.private }}
       - name: Chain next run (work waiting)
         if: steps.work.outputs.chain == 'true'

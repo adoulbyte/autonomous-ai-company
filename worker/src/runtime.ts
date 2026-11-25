@@ -91,6 +91,17 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
     else await enqueue(sql, { type: 'lead.draft_outreach', key: `outreach:${l.id}:retry${l.dead}`, role: 'sales_agent', entityType: 'lead', entityId: String(l.id),
       input: { lead_id: l.id }, priority: 58, title: `Draft outreach (new attempt): ${String(l.title).slice(0, 70)}`, timeoutSeconds: 200 });
   }
+  // A prospect who said yes must always get an answer: a failed mockup is tried again once, then the sales agent replies personally.
+  const noMockup = await sql`select l.id, l.title, count(t.id)::int as dead, (array_agg(t.input->>'message_id' order by t.created_at desc))[1] as message_id
+      from public.leads l join public.tasks t on t.entity_id::text = l.id::text and t.type = 'lead.mockup'
+      where l.stage in ('contacted','engaged') and coalesce(l.quote->>'mockup_sent_at', '') = ''
+      group by l.id, l.title having bool_and(t.status = 'dead') and max(t.created_at) < now() - interval '6 hours'`;
+  for (const l of noMockup) {
+    if (Number(l.dead) < 2) await enqueue(sql, { type: 'lead.mockup', key: `mockup:${l.id}:retry${l.dead}`, role: 'specialist_worker', entityType: 'lead', entityId: String(l.id),
+      input: { lead_id: l.id, message_id: l.message_id }, priority: 83, title: `Free preview (new attempt): ${String(l.title).slice(0, 70)}`, timeoutSeconds: 420 });
+    else if (l.message_id) await enqueue(sql, { type: 'lead.respond', key: `respond:${l.message_id}:after-mockup`, role: 'negotiation_agent', entityType: 'lead', entityId: String(l.id),
+      input: { lead_id: l.id, message_id: l.message_id }, priority: 82, title: `Respond to client: ${String(l.title).slice(0, 70)}`, timeoutSeconds: 220 });
+  }
   // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
   const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
   for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
@@ -152,6 +163,14 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
       const [task] = await claim(o.sql, o.workerId, 1);
       if (!task) break;
       n++;
+      // The machine is stopped by the job timeout: a task that could not finish before it is handed back for the next run
+      // (no attempt is lost), instead of being cut in the middle.
+      const hardLimit = Number((o.env ?? process.env).WORKER_HARD_LIMIT_SECONDS ?? 0);
+      if (hardLimit > 0 && Date.now() + task.timeout_seconds * 1000 > started + hardLimit * 1000) {
+        await defer(o.sql, task.id, o.workerId, 60, 'not enough time left in this run');
+        log(`… handed back ${task.type}: not enough time left in this run`);
+        continue;
+      }
       const r = await executeTask(o, ai, task);
       if (r === 'succeeded') succeeded++; else failed++;
       await o.sql`update public.worker_heartbeats set last_seen_at = now(), tasks_succeeded = ${succeeded}, tasks_failed = ${failed} where worker_id = ${o.workerId}`;

@@ -95,7 +95,7 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
     await autoApproveIfPolicy(tx, approvalId);
     await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency}, next_follow_up_at = now() + interval '5 days',
-        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
+        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, mockup_photos: photos.filter((x) => !x.url.startsWith('data:')), need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
         where id = ${leadId}`;
     if (['contacted', 'engaged'].includes(String(l.stage))) await tx`update public.leads set stage = 'proposal' where id = ${leadId}`;
     return { message_id: out.id, screenshots: !!shots, model };

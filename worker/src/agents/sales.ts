@@ -251,8 +251,10 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
         await enqueue(tx, { type: 'lead.mockup', key: `mockup:${m.lead_id}`, role: 'specialist_worker', entityType: 'lead', entityId: String(m.lead_id),
           input: { lead_id: m.lead_id, message_id: id }, priority: 83, title: `Free preview: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 420 });
       } else {
+        // The conversation is active again: no "are you still interested?" reminder while we are talking with the client.
+        await tx`update public.leads set next_follow_up_at = null where id = ${m.lead_id} and stage = 'proposal'`;
         await enqueue(tx, { type: 'lead.respond', key: `respond:${id}`, role: 'negotiation_agent', entityType: 'lead', entityId: String(m.lead_id),
-          input: { lead_id: m.lead_id, message_id: id }, priority: 82, title: `Respond to client: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 220 });
+          input: { lead_id: m.lead_id, message_id: id, go_button: go }, priority: 82, title: `Respond to client: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 220 });
       }
     } else if (d.category !== 'spam') {
       await logEvent(tx, 'message', id, 'inbound_needs_review', `New inbound email (${d.category}) from ${m.from_addr ?? 'unknown'}: ${d.summary.slice(0, 160)}`, {}, d.priority === 'urgent' || d.priority === 'high' ? 'warning' : 'info');

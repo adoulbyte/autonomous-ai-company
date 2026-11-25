@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { factsFromListing, renderSite, SiteContentSchema, type SiteContent } from '../render/site.js';
+import { tradeProfile, type Photo } from '../render/photos.js';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
@@ -95,7 +97,10 @@ export const produceDeliverable: Handler = async (ctx) => {
   if (existing.length) return finish(ctx, async () => ({ skipped: 'version already produced', deliverable_id: existing[0].id }));
   const prev = version > 1 ? await ctx.sql`select content from public.deliverables where project_id = ${project_id} and work_item = ${work_item} and version = ${version - 1}` : [];
 
-  const res = await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
+  // A website ordered after a mockup: the final site is built from the mockup the client approved (same design and photos),
+  // with the texts updated from what the client sent us. Same engine as the mockup, so the result matches what they saw.
+  const fromMockup = item.format === 'html' && p.lead_id ? await siteFromMockup(ctx, String(p.lead_id), feedback) : null;
+  const res: { data: z.infer<typeof DeliverableSchema>; model: string } = fromMockup ?? await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', schema: DeliverableSchema, maxTokens: 4000,
     messages: [{ role: 'user', content: `${skillsFor('production', `${item.format} ${item.title} ${item.instructions}`)}
 
 Produce the complete deliverable for this work item, to a standard a demanding paying client accepts without changes. Return JSON {title, content, notes, limitations}.
@@ -374,3 +379,35 @@ export const deliverProject: Handler = async (ctx) => {
     return { delivered: dels.length, message_id: msg.id, auto_approved: auto };
   });
 };
+
+const FinalSiteSchema = SiteContentSchema.extend({
+  phone: z.string().max(40).nullable().optional(), hours: z.string().max(200).nullable().optional(), address: z.string().max(200).nullable().optional(),
+});
+
+async function siteFromMockup(ctx: Parameters<Handler>[0], leadId: string, feedback?: string[]): Promise<{ data: z.infer<typeof DeliverableSchema>; model: string } | null> {
+  const [l] = await ctx.sql`select l.quote, o.analysis, o.description as listing, o.buyer_name, k.email from public.leads l
+      left join public.opportunities o on o.id = l.opportunity_id left join public.contacts k on k.id = l.contact_id where l.id = ${leadId}`;
+  const q = (l?.quote ?? {}) as { mockup_content?: SiteContent; mockup_photos?: Photo[]; mockup_html?: string; need?: string };
+  if (!q.mockup_content || (q.need && q.need !== 'website')) return null;
+  const a = (l.analysis ?? {}) as { language?: string; category?: string; city?: string };
+  const lang = a.language ?? 'fr';
+  const thread = await ctx.sql`select m.body from public.messages m join public.conversations c on c.id = m.conversation_id
+      where c.lead_id = ${leadId} and m.direction = 'inbound' and m.classification->>'automated' is null order by m.created_at desc limit 6`;
+  const r = await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'standard', allowDowngrade: true, schema: FinalSiteSchema, maxTokens: 3000, temperature: 0.3,
+    messages: [{ role: 'user', content: `${skillsFor('production', 'html website vitrine copywriting')}
+The client ordered their one-page website after approving our mockup. Update the mockup texts below with the information the client sent us
+(their real services, descriptions, opening hours, phone, address, wishes). Keep the same JSON keys and the same tone; keep what the client did not change.
+Language: ${lang}. Never invent facts (prices, reviews, years, names) that are not in the mockup, the listing or the client's messages.
+Return JSON with the same keys as the mockup texts, plus optional phone, hours, address (only if the client gave them).
+${feedback?.length ? `The quality reviewer asked for these corrections — apply ALL of them:\n${feedback.map((f) => `- ${f}`).join('\n')}\n` : ''}
+${untrusted('mockup-texts', JSON.stringify(q.mockup_content), 8000)}
+${untrusted('business-listing', String(l.listing ?? ''), 2000)}
+${untrusted('client-messages', thread.map((t) => String(t.body).slice(0, 2000)).join('\n---\n'), 8000)}` }] });
+  const facts = factsFromListing(String(l.listing ?? ''), String(l.buyer_name ?? ''), a.city, l.email);
+  const photos = q.mockup_photos?.length ? q.mockup_photos
+    : [...new Set([...(q.mockup_html ?? '').matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]))].map((url) => ({ url, thumb: url, credit: null }));
+  const { phone, hours, address, ...content } = r.data;
+  const html = renderSite(content, { ...facts, phone: phone ?? facts.phone, hours: hours ?? facts.hours, address: address ?? facts.address }, photos, tradeProfile(a.category).theme, lang);
+  return { model: r.model, data: { title: `Site vitrine — ${facts.name}`, content: html,
+    notes: 'Built from the mockup approved by the client (same design and photos), with the information they sent.', limitations: [] } };
+}
