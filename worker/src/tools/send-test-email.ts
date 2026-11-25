@@ -4,7 +4,7 @@ import { loadConfig } from '../config.js';
 import { connect, getSetting } from '../db.js';
 import { gmailTransport } from '../email/transport.js';
 import { logoAttachment, renderHtml, renderText, type Identity } from '../email/template.js';
-import { prospectCta, prospectHighlights } from '../email/cta.js';
+import { prospectCta } from '../email/cta.js';
 import { catalogMenu, getCatalog } from '../agents/pricing.js';
 
 const to = process.env.OWNER_EMAIL;
@@ -50,9 +50,10 @@ Nous pourrions vous préparer une page simple et élégante : présentation de l
 Si l’idée vous intéresse, un simple clic ci-dessous suffit pour recevoir un devis gratuit et sans engagement.
 
 Si vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.`;
-  await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: '[TEST] Une idée pour la Boulangerie du Parc',
-    text: renderText(cold, id), html: renderHtml(cold, id, { preheader: 'Exemple de premier contact', cta: prospectCta(mail.address, 'fr', cat), highlights: prospectHighlights('fr', 'website'), noImages: true }),
-    listUnsubscribe: `mailto:${mail.address}?subject=STOP` });
+  await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: 'Une idée pour la Boulangerie du Parc',
+    // Exactly what a prospect receives (same rendering as the agents' sending code).
+    text: renderText(cold, id), html: renderHtml(cold, id, { cta: prospectCta(mail.address, 'fr', cat), noImages: true, personal: true }) });
+  if (process.env.TEST_MODE === 'prospect') { console.log('prospecting test email sent'); process.exit(0); }
   const quote = `Bonjour,
 
 Merci pour votre réponse. Voici notre devis pour la Boulangerie du Parc (exemple fictif) :
