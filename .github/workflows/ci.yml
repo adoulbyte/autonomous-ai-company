@@ -65,10 +65,16 @@ jobs:
         with: { version: latest }
       - name: Start Supabase (applies supabase/migrations)
         run: |
+          supabase --version
           supabase init --force --with-vscode-settings=false --with-intellij-settings=false || supabase init --force
-          sed -i 's/^enable_signup = true/enable_signup = false/' supabase/config.toml || true
-          sed -i -E 's/^(port|shadow_port|smtp_port|pop3_port|inspector_port) = 54([0-9]{3})$/\1 = 64\2/' supabase/config.toml
-          grep -nE '^(port|shadow_port) = ' supabase/config.toml
+          # Newer CLI versions may write the config file somewhere else: find it instead of assuming its path.
+          CFG=supabase/config.toml
+          [ -f "$CFG" ] || CFG=$(grep -rlE '^project_id *=' --include='*.toml' . 2>/dev/null | grep -v node_modules | head -1)
+          echo "config file: ${CFG:-none}"; ls -la supabase | head -20
+          [ -n "$CFG" ] && [ -f "$CFG" ] || { echo 'Supabase config file not found after init'; exit 1; }
+          sed -i 's/^enable_signup = true/enable_signup = false/' "$CFG" || true
+          sed -i -E 's/^(port|shadow_port|smtp_port|pop3_port|inspector_port) = 54([0-9]{3})$/\1 = 64\2/' "$CFG"
+          grep -nE '^(port|shadow_port) = ' "$CFG"
           supabase start -x studio,imgproxy,inbucket,mailpit,edge-runtime,logflare,vector,supavisor,postgres-meta
           supabase status -o env > supabase.env
           grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY|DB_URL)=' supabase.env | sed 's/"//g' >> "$GITHUB_ENV"
