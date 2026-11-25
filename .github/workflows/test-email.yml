@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'designed (2 sample emails), plain (one short plain-text email) buttons (2 variants with quick-reply buttons) or prospect (the real first-contact email)'
+        description: 'designed (2 sample emails), plain (one short plain-text email) buttons (2 variants with quick-reply buttons) prospect (the real first-contact email) or mockup (what a prospect receives after clicking yes)'
         default: designed
 permissions: { contents: read }
 jobs:

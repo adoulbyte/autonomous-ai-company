@@ -92,11 +92,12 @@ What we propose (trusted): ${a.need === 'website'
     : `one quick, useful deliverable for their activity, chosen to fit their trade: e.g. ad scripts for social media, a flyer or menu as PDF, a price list or planning in Excel, simple visuals. They already have a website (${a.website ?? ''}).`}
 ${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FREE OF CHARGE, with no obligation, in exchange for an honest review once delivered. We show a preview first.`
     : `Offer (trusted): describe concretely what we would create for THIS business (e.g. the sections of their site, or 2-3 ad ideas adapted to their trade) as a short example of our approach.
-Then: free quote with no obligation on simple reply; they see a preview of the finished work before receiving the invoice; files delivered on payment. Do NOT state a price in this first email.`}
+Then offer, free and with no obligation, to prepare and show them ${a.need === 'website' ? 'a mockup of THEIR website' : 'a sample visual for THEIR business'} before any decision.
+Do NOT state a price in this first email.`}
 Rules (mandatory):
 - 90-150 words, plain text, no markdown, polite (${lang === 'French' ? '"vous"' : lang === 'Dutch' ? '"u"' : 'formal'}). Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
-- One clear next step: two small quick-reply buttons are added automatically under your text ("interested – get a quote" / "not interested");
-  invite the reader to use them or simply reply. Do not write the buttons yourself and do not list prices (the quote form lists them).
+- One clear next step: two small quick-reply buttons are added automatically under your text ("yes, show me the free mockup" / "not interested");
+  invite the reader to use them or simply reply. Do not write the buttons yourself and do not list prices.
 - Honest only: no years of experience, past clients, testimonials, awards or portfolio. Do NOT pretend to be a human individual.
 - No pressure or urgency. End the body with this exact opt-out sentence: "${optOut}"
 - Deliverability (mandatory): no links, no attachments, no prices, no ALL CAPS, no exclamation marks, no emojis; the subject is short (max 7 words), natural and
@@ -206,6 +207,10 @@ export const triageMessage: Handler = async (ctx) => {
 Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrusted('inbound-message', `Subject: ${m.subject ?? ''}\nFrom: ${m.from_addr ?? ''}\n\n${m.body}`, 6000)}` }],
     maxTokens: 900 });
   const d = res.data;
+  // Prospects from directories get the free preview first (once), whatever the wording of their positive reply.
+  const [ld] = m.lead_id ? await ctx.sql`select l.stage, l.quote, o.analysis from public.leads l left join public.opportunities o on o.id = l.opportunity_id where l.id = ${m.lead_id}` : [];
+  const needsMockup = !!ld && (ld.analysis as { prospect?: boolean } | null)?.prospect === true && !(ld.quote as { mockup_sent_at?: string } | null)?.mockup_sent_at
+    && ['contacted', 'engaged'].includes(String(ld.stage)) && !optOut;
   return finish(ctx, async (tx) => {
     await tx`update public.messages set classification = ${tx.json({ ...d, model: res.model } as never)}, priority = ${injection ? 'high' : d.priority},
         injection_suspected = ${injection} where id = ${id}`;
@@ -226,6 +231,10 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
         await tx`update public.contacts set do_not_contact = true where id = (select contact_id from public.leads where id = ${m.lead_id})`;
         const [lead] = await tx`select stage from public.leads where id = ${m.lead_id}`;
         if (['contacted', 'engaged', 'proposal', 'negotiating', 'qualified'].includes(lead?.stage)) await tx`update public.leads set stage = 'lost', lost_reason = 'unsubscribed' where id = ${m.lead_id}`;
+      } else if (needsMockup && d.intent !== 'negative') {
+        // A prospect who said yes to the free preview: build the personalised mockup and send it with the quote and the brochure.
+        await enqueue(tx, { type: 'lead.mockup', key: `mockup:${m.lead_id}`, role: 'specialist_worker', entityType: 'lead', entityId: String(m.lead_id),
+          input: { lead_id: m.lead_id, message_id: id }, priority: 83, title: `Free preview: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 420 });
       } else {
         await enqueue(tx, { type: 'lead.respond', key: `respond:${id}`, role: 'negotiation_agent', entityType: 'lead', entityId: String(m.lead_id),
           input: { lead_id: m.lead_id, message_id: id }, priority: 82, title: `Respond to client: ${String(m.subject ?? '').slice(0, 70)}`, timeoutSeconds: 220 });

@@ -1,5 +1,5 @@
 import type { Cta, Highlights } from './template.js';
-import { catalogMenu, type Catalog } from '../agents/pricing.js';
+import type { Catalog } from '../agents/pricing.js';
 
 /** Reply buttons for a prospecting email. They open a pre-filled reply (mailto), so everything stays in the conversation:
  *  no tracking, no external link (better deliverability), and the agents read the answer like any reply. */
@@ -18,11 +18,22 @@ const T: Record<string, { yes: string; no: string; subjYes: string; subjNo: stri
         info: 'Informações úteis (atividade, textos, cores, redes sociais…):', when: 'Prazo pretendido:', phone: 'Telefone (opcional):', stopBody: 'Por favor, não me contacte mais.' },
 };
 
-export function prospectCta(mailbox: string, lang: string, catalog: Catalog): Cta {
-  const t = T[lang] ?? T.en;
-  const body = `${t.intro}\n\n${t.choose}\n${catalogMenu(catalog, lang)}\n\n${t.info}\n\n\n${t.when}\n\n${t.phone}\n`;
+const M: Record<string, { yesSite: string; yesPost: string; subj: string; body: string }> = {
+  fr: { yesSite: 'Oui, je veux voir la maquette gratuite', yesPost: 'Oui, je veux voir un exemple gratuit', subj: 'Intéressé – maquette gratuite',
+        body: 'Bonjour,\n\nOui, je souhaite voir la maquette gratuite.\n\nInformations utiles (facultatif : ce que vous voulez mettre en avant, couleurs, horaires…) :\n\n' },
+  en: { yesSite: 'Yes, show me the free mockup', yesPost: 'Yes, show me a free sample', subj: 'Interested – free mockup',
+        body: 'Hello,\n\nYes, I would like to see the free mockup.\n\nUseful information (optional: what to highlight, colours, opening hours…):\n\n' },
+  nl: { yesSite: 'Ja, toon mij het gratis voorbeeld', yesPost: 'Ja, toon mij een gratis voorbeeld', subj: 'Geïnteresseerd – gratis voorbeeld',
+        body: 'Goedendag,\n\nJa, ik wil graag het gratis voorbeeld zien.\n\nNuttige informatie (optioneel: wat u wilt benadrukken, kleuren, openingstijden…):\n\n' },
+  pt: { yesSite: 'Sim, quero ver a maquete grátis', yesPost: 'Sim, quero ver um exemplo grátis', subj: 'Interessado – maquete grátis',
+        body: 'Olá,\n\nSim, gostaria de ver a maquete grátis.\n\nInformações úteis (opcional: o que destacar, cores, horário…):\n\n' },
+};
+
+export function prospectCta(mailbox: string, lang: string, catalog: Catalog, need = 'website'): Cta {
+  const t = T[lang] ?? T.en; const m = M[lang] ?? M.en;
+  void catalog;
   const mailto = (subject: string, b: string) => `mailto:${mailbox}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(b)}`;
-  return { yes: { label: t.yes, href: mailto(t.subjYes, body) }, no: { label: t.no, href: mailto(t.subjNo, t.stopBody) } };
+  return { yes: { label: need === 'website' ? m.yesSite : m.yesPost, href: mailto(m.subj, m.body) }, no: { label: t.no, href: mailto(t.subjNo, t.stopBody) } };
 }
 
 /** A reply whose subject comes from the "interested" button. */

@@ -12,6 +12,7 @@ import { followUp, pollInbox, sendOutbox } from './agents/comms.js';
 import { respondToLead } from './agents/negotiation.js';
 import { captureFeedback } from './agents/feedback.js';
 import { marketingReview } from './agents/marketing.js';
+import { prospectMockup } from './agents/mockup.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -41,6 +42,7 @@ export const HANDLERS: Record<string, Handler> = {
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'marketing.review': marketingReview,
+  'lead.mockup': prospectMockup,
   'system.health_check': healthCheck,
 };
 

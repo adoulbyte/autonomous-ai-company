@@ -287,7 +287,7 @@ describe('reply buttons in prospecting emails', () => {
   it('opens a pre-filled quote request listing the menu, and a STOP reply', () => {
     const c = prospectCta('studio@example.test', 'fr', cat);
     expect(c.yes.href).toMatch(/^mailto:studio@example\.test\?subject=/);
-    expect(decodeURIComponent(c.yes.href)).toContain('Site vitrine une page: 49 € (3 jours)');
+    expect(decodeURIComponent(c.yes.href)).toContain('maquette gratuite');
     expect(decodeURIComponent(c.no.href)).toContain('subject=STOP');
     expect(renderHtml('Bonjour', { company_name: 'S', sender_name: 'S', tagline: '', website: '', signature: 's', ai_disclosure: 'd' }, { personal: true, cta: c })).toContain('mailto:');
   });

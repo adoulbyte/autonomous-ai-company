@@ -36,11 +36,14 @@ const ai: Responder = (prompt) => {
     body: 'Bonjour,\n\nNous avons vu votre adresse professionnelle sur votre fiche publique. Nous lançons notre studio et proposons de créer gratuitement un site vitrine simple et moderne pour votre commerce, en échange d\'un avis honnête. Vous verrez un aperçu avant toute décision.\n\nSouhaitez-vous que nous commencions ? Répondez simplement « oui ».\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.',
     claims_made: [], questions_for_buyer: [] } };
   if (prompt.includes('Review this outreach email')) return { body: { score: 9, issues: [], verdict: 'send' } };
+  if (prompt.includes('Create a free preview for this local business')) return { body: { summary: 'One-page site',
+    html: '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Salon</title><style>body{font-family:Arial;margin:0}header{background:#222;color:#fff;padding:40px}</style></head><body><header><h1>Salon Coiffure Belle</h1><p>Votre salon de coiffure à Lyon</p></header><main><section><h2>Nos services</h2><p>Coupe, couleur et soins pour toute la famille.</p></section><section><h2>Contact</h2><p>salon.belle@mail.example</p></section></main></body></html>' } };
+  if (prompt.includes('Review this free preview')) return { body: { score: 9, issues: [] } };
   if (prompt.includes('Classify this inbound message')) return { body: { category: 'prospect_reply', intent: 'neutral', priority: 'normal', summary: 'reply', reply_draft: null } };
   return { status: 500, body: { error: 'unexpected prompt' } };
 };
 const net = fakeFetch({ ai, json: { 'https://overpass-api.de/api/interpreter': OSM, 'https://hn.algolia.com/': { hits: [] }, 'https://api.github.com/search/issues': { items: [] },
-  'https://remotive.com/api/remote-jobs': { jobs: [] }, 'https://models.github.ai/catalog/models': [] } });
+  'https://remotive.com/api/remote-jobs': { jobs: [] }, 'https://models.github.ai/catalog/models': [{ id: 'openai/gpt-4.1' }, { id: 'openai/gpt-4.1-mini' }] } });
 
 beforeAll(async () => {
   db = await freshDb(); sql = db.sql; await registerOwner(sql);
@@ -100,6 +103,24 @@ describe('continuous prospecting cycle', () => {
     const [l] = await sql`select l.stage from public.leads l join public.contacts c on c.id = l.contact_id where c.email = 'contact@boulangerie-parc.example'`;
     expect(l.stage).toBe('lost');
   });
+  it('a prospect who clicks "yes" receives a personalised mockup, the quote and the brochure', async () => {
+    const target = outbox.find((m) => m.to === 'salon.belle@mail.example') ?? outbox[1];
+    const sentId = `<sent-${outbox.indexOf(target) + 1}@example.test>`;
+    inbox.push({ uid: 10, messageId: '<yes-1@salon.example>', inReplyTo: sentId, references: [sentId], from: String(target.to), fromName: 'Salon',
+      to: mail.address, subject: 'Intéressé – maquette gratuite', text: 'Oui, je souhaite voir la maquette gratuite.', date: new Date() });
+    const before = outbox.length;
+    await runWorker({ sql, workerId: 'w4', env, fetchFn: net.fn, mail, timeBudgetMs: 120_000, log: console.log });
+    const sent = outbox.slice(before).find((m) => m.to === target.to);
+    expect(sent).toBeDefined();
+    expect(sent!.html).toContain('cid:'); // designed email (logo/preview images)
+    const pdf = sent!.attachments!.find((x) => x.filename.endsWith('.pdf'));
+    expect(Buffer.from(pdf!.content as Buffer).subarray(0, 4).toString()).toBe('%PDF');
+    expect(sent!.text).toMatch(/maquette/);
+    expect(sent!.text).toMatch(/offerte/); // launch mode in this test: the work stays free
+    const [l] = await sql`select l.stage, l.quote from public.leads l join public.contacts c on c.id = l.contact_id where c.email = ${target.to}`;
+    expect(l.stage).toBe('proposal');
+    expect((l.quote as { mockup_sent_at?: string }).mockup_sent_at).toBeTruthy();
+  }, 120_000);
   void HANDLERS;
 });
 

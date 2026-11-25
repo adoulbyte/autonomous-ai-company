@@ -55,13 +55,13 @@ export const sendOutbox: Handler = async (ctx) => {
     const prev = await ctx.sql`select email_message_id from public.messages where conversation_id = ${m.conversation_id} and email_message_id is not null order by created_at`;
     const refs = prev.map((p) => p.email_message_id as string);
     try {
-      const attachments = ((m.attachments as { filename: string; content_b64: string; contentType?: string }[]) ?? [])
-        .map((a) => ({ filename: a.filename, content: Buffer.from(a.content_b64, 'base64'), contentType: a.contentType }));
+      const attachments = ((m.attachments as { filename: string; content_b64: string; contentType?: string; cid?: string }[]) ?? [])
+        .map((a) => ({ filename: a.filename, content: Buffer.from(a.content_b64, 'base64'), contentType: a.contentType, ...(a.cid ? { cid: a.cid } : {}) }));
       const prospecting = /^(outreach|followup):/.test(String(m.idempotency_key ?? ''));
       if (prospecting && sentOutreach > 0 && pacing) await new Promise((r) => setTimeout(r, 25000 + Math.random() * 35000));   // human-like pace
       if (prospecting && sentOutreach >= 5) continue;   // at most 5 prospecting emails per run; the rest go next cycle
       const cls = (m.classification ?? {}) as { cta?: { lang: string; need?: string } };
-      const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql)) : undefined;
+      const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql), cls.cta.need ?? 'website') : undefined;
       const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, noImages: prospecting, personal: prospecting });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       // Cold emails (first contact, follow-ups) look like a personal message with two small quick-reply buttons (tested: Gmail inbox);

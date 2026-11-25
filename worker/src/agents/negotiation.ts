@@ -38,9 +38,7 @@ export const respondToLead: Handler = async (ctx) => {
   const deals = await getSetting<{ auto_accept: boolean; max_auto_accept_minor: number }>(ctx.sql, 'deals.policy', { auto_accept: true, max_auto_accept_minor: 300000 });
   const mode = await getMode(ctx.sql);
   // A promise is a promise: clients first contacted with the free launch offer keep it, even after the switch to paid mode.
-  const [first] = await ctx.sql`select m.subject, m.body from public.messages m join public.conversations c on c.id = m.conversation_id
-      where c.lead_id = ${leadId} and m.direction = 'outbound' and m.status = 'sent' order by m.created_at limit 1`;
-  const promisedFree = !!first && /\b(gratuit|gratuitement|offert|free of charge|for free)\b/i.test(`${first.subject ?? ''} ${first.body ?? ''}`);
+  const promisedFree = await promisedFreeWork(ctx.sql, leadId);
   const pilot = isPilot(mode) || promisedFree;
   const floor = pilot ? 0 : Math.max(pricing.min_price_minor, Math.round(Number(l.est_hours ?? 0) * pricing.min_hourly_minor));
   const quote = pilot ? 0 : Number(l.value_minor ?? floor);
@@ -121,3 +119,16 @@ ${untrusted('thread', thread.map((t) => `[${t.direction}] ${String(t.body).slice
     return { intent, project_id: projectId, model: res.model };
   });
 };
+
+/** End of the free launch offer: prospects first contacted after this date were offered a free PREVIEW, not free work. */
+export const FREE_OFFER_ENDED_AT = new Date('2026-11-25T19:00:00Z');
+
+/** True when the first email this lead received promised free work (launch offer). A promise is a promise. */
+export async function promisedFreeWork(sql: import('../db.js').Sql, leadId: string): Promise<boolean> {
+  const [first] = await sql`select m.subject, m.body, coalesce(m.sent_at, m.created_at) as at from public.messages m join public.conversations c on c.id = m.conversation_id
+      where c.lead_id = ${leadId} and m.direction = 'outbound' and m.status = 'sent' order by m.created_at limit 1`;
+  if (!first || new Date(first.at as Date) >= FREE_OFFER_ENDED_AT) return false;
+  const text = `${first.subject ?? ''} ${first.body ?? ''}`
+    .replace(/\b(devis|estimation|maquette|exemple|aperçu|quote|estimate|preview|mockup|sample)\s+(gratuit\w*|offert\w*|free)\b|\bfree\s+(quote|estimate|preview|mockup|sample)\b/gi, '');
+  return /\b(gratuit|gratuitement|offert|free of charge|for free)\b/i.test(text);
+}
