@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'designed (2 sample emails), plain (one short plain-text email) buttons (2 variants with quick-reply buttons) prospect (the real first-contact email) or mockup (what a prospect receives after clicking yes)'
+        description: 'designed (2 sample emails), plain (one short plain-text email) buttons (2 variants with quick-reply buttons) prospect (the real first-contact email), mockup (what a prospect receives after clicking yes) or subscription (monthly pack offer)'
         default: designed
       trade:
-        description: 'for mode mockup: shop=bakery, shop=hairdresser, amenity=restaurant or craft=plumber'
+        description: 'for modes mockup and subscription: shop=bakery, shop=hairdresser, amenity=restaurant or craft=plumber'
         default: shop=bakery
       reminder:
         description: 'for mode mockup: 1 = show the reminder version (3 buttons)'

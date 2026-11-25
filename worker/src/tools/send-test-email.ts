@@ -60,6 +60,36 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     console.log(`mockup test email sent (photos: ${p.photos.length}, preview images: ${shots ? 'yes' : 'no browser'})`);
     process.exit(0);
   }
+  if (process.env.TEST_MODE === 'subscription') {
+    // What a delivered client receives 3 days after the delivery: the monthly pack offer with a sample visual (real engine).
+    const { AiGateway } = await import('../ai/gateway.js');
+    const { socialPostHtml, getPlans } = await import('../agents/subscriptions.js');
+    const { subscriptionCta } = await import('../email/cta.js');
+    const { screenshotHtml } = await import('../render/screenshot.js');
+    const kind = process.env.TEST_TRADE || 'shop=bakery';
+    const names: Record<string, string> = { 'shop=bakery': 'Boulangerie du Parc', 'shop=hairdresser': 'Salon Belle Mèche', 'amenity=restaurant': 'Le Petit Comptoir', 'craft=plumber': 'Martin Plomberie' };
+    const name = names[kind] ?? 'Boutique du Centre';
+    const lead = { id: 'test', name, email: 'contact@exemple-fictif.fr', lang: 'fr', category: kind, city: 'Lyon', dnc: false,
+      listing: `Entreprise : ${name}\nActivité : ${kind}\nVille : Lyon\nAdresse : 12 rue de la République 69002 Lyon` };
+    const post = await socialPostHtml({ ai: new AiGateway(sql, process.env), env: process.env, lead, index: 0, theme: 'what makes this business special (its know-how)', avoid: [] });
+    const shot = await screenshotHtml(post.html, process.env, 'post');
+    const plan = (await getPlans(sql)).social_monthly;
+    const price = `${(plan.price_minor / 100).toFixed(0)} €`;
+    const body = `Bonjour,
+
+Merci encore pour votre confiance. Pour que vos clients vous voient régulièrement sur les réseaux sociaux, nous proposons un pack simple : ${plan.label.fr.toLowerCase()}, prêts à publier, à vos couleurs et adaptés à votre activité, pour ${price} par mois.
+
+Sans engagement : chaque mois, vous ne payez qu’une fois les visuels prêts, et vous arrêtez quand vous voulez, en un clic.
+
+Voici un exemple préparé pour ${name} (commerce fictif pour ce test ; ci-dessous).`;
+    const img = shot ? `<div style="margin:6px 0 18px"><img src="cid:sample-post" alt="" width="300" style="display:block;width:300px;max-width:100%;border:1px solid #e7e4dd;border-radius:10px"></div>` : '';
+    const html = renderHtml(body, id, { preheader: plan.label.fr, blocks: img, cta: subscriptionCta(mail.address, 'fr', price) });
+    const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
+    await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: `[TEST] ${plan.label.fr}`, text: renderText(body, id), html,
+      attachments: [...(logo ? [logo] : []), ...(shot ? [{ filename: 'exemple.jpg', content: shot.desktop, contentType: 'image/jpeg', cid: 'sample-post' }] : [])] });
+    console.log(`subscription test email sent (sample visual: ${shot ? 'yes' : 'no browser'})`);
+    process.exit(0);
+  }
   if (process.env.TEST_MODE === 'plain') {
     // Diagnostic: a short plain-text email, no HTML, no link, no button — tells whether content or reputation decides.
     await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: 'Petite question',
