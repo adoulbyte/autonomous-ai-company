@@ -74,7 +74,7 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   await enqueue(sql, { type: 'analytics.snapshot', key: `analytics:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'business_intelligence', priority: 20, title: 'Metrics snapshot' });
   await enqueue(sql, { type: 'system.health_check', key: `health:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'orchestrator', priority: 25, title: 'System health check' });
   const week = Math.floor(now.getTime() / (7 * 86_400_000));
-  await enqueue(sql, { type: 'marketing.review', key: `marketing:${day}`, role: 'marketing_strategist', priority: 15, title: 'Daily marketing review', timeoutSeconds: 240 });
+  await enqueue(sql, { type: 'marketing.review', key: `marketing:v2:${day}`, role: 'marketing_strategist', priority: 15, title: 'Daily marketing review', timeoutSeconds: 240 });
   await enqueue(sql, { type: 'strategy.review', key: `strategy:${week}`, role: 'executive_strategist', priority: 10, title: 'Weekly strategy review', timeoutSeconds: 300 });
   // CRM reminders and follow-ups surface as alerts (once).
   const reminders = await sql`update public.reminders set notified_at = now() where done_at is null and notified_at is null and due_at <= now() returning id, title, entity_type, entity_id`;

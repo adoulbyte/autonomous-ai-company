@@ -12,7 +12,11 @@ export function fakeFetch(routes: { ai?: Responder; json?: Record<string, unknow
       const body = JSON.parse(String(init?.body));
       const prompt = body.messages.map((m: { content: string }) => m.content).join('\n');
       calls.push({ url, model: body.model, prompt });
-      const r = routes.ai?.(prompt, body.model) ?? { status: 500 };
+      // The daily marketing review runs in every cycle: a neutral exploration plan unless a test answers it itself.
+      const marketing = prompt.includes('You are the marketing strategist') ? { body: { summary: 'Plan d’exploration.', focus_categories: [], deprioritize_categories: [], writing_tips: [],
+        country_weights: { FR: 2, GB: 1 }, zones_per_city: 5, geo_reason: 'Test.' } } : null;
+      const own = routes.ai?.(prompt, body.model);
+      const r = (own && !(own.status && own.status >= 400) ? own : marketing ?? own) ?? { status: 500 };
       if (r.status && r.status !== 200) return new Response(JSON.stringify(r.body ?? { error: 'fake error' }), { status: r.status, headers: r.headers });
       return Response.json({ choices: [{ message: { content: r.content ?? JSON.stringify(r.body) } }], usage: { prompt_tokens: 100, completion_tokens: 50 } });
     }

@@ -308,3 +308,13 @@ describe('email design', () => {
     expect(renderHtml('Bonjour', id)).toContain('cid:company-logo');
   });
 });
+
+describe('geographic plan chosen by the marketing strategist', () => {
+  it('follows the country weights and the number of zones per city, ignoring unknown countries', async () => {
+    const { citiesFor, areaAt } = await import('../src/connectors/osm.js');
+    const cities = citiesFor({ country_weights: { GB: 2, FR: 1, DE: 3 } });
+    expect(cities.slice(0, 3).map((c) => c[3] ?? 'FR')).toEqual(['GB', 'GB', 'FR']);
+    expect(cities.some((c) => c[3] === 'DE')).toBe(false);
+    expect(areaAt({ country_weights: { GB: 2, FR: 1 }, zones_per_city: 1, cursor: 2 }).city).toBe(cities[2][0]);
+  });
+});

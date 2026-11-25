@@ -62,9 +62,35 @@ export const USA: City[] = [
 ];
 
 /** Rotation: two French-speaking cities, then one international city, so every market is reached early. */
+/** Countries we may prospect (from the city lists), with their number of cities. */
+export function allowedCountries(config: Record<string, unknown> = {}): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const c of [...FRANCE_AND_NEIGHBOURS, ...INTERNATIONAL, ...(config.include_us === true ? USA : [])]) out[c[3] ?? 'FR'] = (out[c[3] ?? 'FR'] ?? 0) + 1;
+  return out;
+}
+
 export function citiesFor(config: Record<string, unknown>): City[] {
   if (Array.isArray(config.cities)) return config.cities as City[];
   const intl = [...INTERNATIONAL, ...(config.include_us === true ? USA : [])];
+  // The marketing strategist's plan: how many cities of each country per round (0 = paused). Unknown countries are ignored.
+  const w = config.country_weights as Record<string, number> | undefined;
+  if (w && typeof w === 'object') {
+    const byCountry = new Map<string, City[]>();
+    for (const c of [...FRANCE_AND_NEIGHBOURS, ...intl]) { const k = c[3] ?? 'FR'; byCountry.set(k, [...(byCountry.get(k) ?? []), c]); }
+    const plan = Object.entries(w).map(([k, n]) => [k.toUpperCase(), Math.max(0, Math.min(5, Math.round(Number(n) || 0)))] as const).filter(([k, n]) => n > 0 && byCountry.has(k));
+    if (plan.length) {
+      const out: City[] = []; const pos = new Map<string, number>();
+      for (let more = true; more;) {
+        more = false;
+        for (const [k, n] of plan) {
+          const list = byCountry.get(k)!; let i = pos.get(k) ?? 0;
+          for (let t = 0; t < n && i < list.length; t++) out.push(list[i++]);
+          pos.set(k, i); if (i < list.length) more = true;
+        }
+      }
+      return out;
+    }
+  }
   const out: City[] = []; let i = 0, j = 0;
   while (i < FRANCE_AND_NEIGHBOURS.length || j < intl.length) {
     for (let k = 0; k < 2 && i < FRANCE_AND_NEIGHBOURS.length; k++) out.push(FRANCE_AND_NEIGHBOURS[i++]);
@@ -145,7 +171,7 @@ export function toProspect(el: OsmEl, city: string, country = 'FR', language = '
 /** The area explored for a given cursor: every city centre and 4 neighbourhoods, in rotation. */
 export function areaAt(config: Record<string, unknown>) {
   const cities = citiesFor(config);
-  const areas = cities.flatMap(([name, la, lo, country = 'FR', lang = 'fr']) => AREA_OFFSETS.map(([dy, dx]) => ({ name, lat: la + dy, lon: lo + dx, country, lang })));
+  const areas = cities.flatMap(([name, la, lo, country = 'FR', lang = 'fr']) => AREA_OFFSETS.slice(0, Math.max(1, Math.min(AREA_OFFSETS.length, Number(config.zones_per_city ?? AREA_OFFSETS.length) || AREA_OFFSETS.length))).map(([dy, dx]) => ({ name, lat: la + dy, lon: lo + dx, country, lang })));
   const cursor = Number(config.cursor ?? 0) % areas.length;
   const a = areas[cursor];
   return { cursor, city: a.name, lat: a.lat, lon: a.lon, country: a.country, language: a.lang, total: areas.length, cities: cities.length };

@@ -43,6 +43,9 @@ export function Funnel() {
       </Card>
       <Card title="Stratégie marketing (agent dédié)" pad>
         <p className="small" style={{ marginTop: 0 }}>{String(data.strategy?.summary ?? 'En attente des premiers résultats.')}</p>
+        {data.strategy?.country_weights ? <div className="small"><strong>Plan géographique :</strong>{' '}
+          {Object.entries(data.strategy.country_weights as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${COUNTRY[c] ?? c} ×${n}`).join(' · ')}
+          {' '}— {String(data.strategy.zones_per_city ?? 5)} zone(s) par ville{data.strategy.geo_reason ? <div className="muted">{String(data.strategy.geo_reason)}</div> : null}</div> : null}
         {(data.strategy?.focus_categories as string[] | undefined)?.length ? <div className="small"><strong>Cibles prioritaires :</strong> {(data.strategy!.focus_categories as string[]).join(', ')}</div> : null}
         {(data.strategy?.writing_tips as string[] | undefined)?.length ? <ul className="small">{(data.strategy!.writing_tips as string[]).map((t) => <li key={t}>{t}</li>)}</ul> : null}
         {data.strategy?.updated_at ? <div className="small muted">Mise à jour : {new Date(String(data.strategy.updated_at)).toLocaleString('fr-FR')}</div> : null}
@@ -50,3 +53,6 @@ export function Funnel() {
     </div>
   );
 }
+
+const COUNTRY: Record<string, string> = { FR: 'France', BE: 'Belgique', LU: 'Luxembourg', MC: 'Monaco', GB: 'Royaume-Uni', IE: 'Irlande', NL: 'Pays-Bas', PT: 'Portugal',
+  MA: 'Maroc', TN: 'Tunisie', SN: 'Sénégal', CI: 'Côte d’Ivoire', CA: 'Canada', AU: 'Australie', NZ: 'Nouvelle-Zélande', US: 'États-Unis' };
