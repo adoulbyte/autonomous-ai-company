@@ -3,7 +3,7 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 
 export interface OutgoingMail {
-  from: string; to: string; subject: string; text: string; html?: string;
+  from: string; to: string; subject: string; text: string; html?: string | undefined;
   inReplyTo?: string | null; references?: string[];
   attachments?: { filename: string; content: string | Buffer; contentType?: string; cid?: string }[];
   /** List-Unsubscribe header (mailto), required by Gmail/Yahoo for bulk senders and a strong deliverability signal. */

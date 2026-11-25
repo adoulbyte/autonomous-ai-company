@@ -95,8 +95,8 @@ ${isPilot(mode) ? `Offer (trusted): we are launching our studio, so we do it FRE
 Then: free quote with no obligation on simple reply; they see a preview of the finished work before receiving the invoice; files delivered on payment. Do NOT state a price in this first email.`}
 Rules (mandatory):
 - 90-150 words, plain text, no markdown, polite (${lang === 'French' ? '"vous"' : lang === 'Dutch' ? '"u"' : 'formal'}). Personalise with the business name, its trade (${a.category ?? ''}) and city (${a.city ?? ''}).
-- One clear next step: two buttons are added automatically under your text ("interested – get a quote" / "not interested"); invite the reader to use them
-  or simply to reply. Do not write the buttons yourself and do not list prices (the quote form lists our quick-service menu).
+- One clear next step: invite them to simply reply (e.g. "oui" / "yes") to receive a free, no-obligation quote, or to tell us what they would like
+  to highlight. Do not list prices (they are given in the quote).
 - Honest only: no years of experience, past clients, testimonials, awards or portfolio. Do NOT pretend to be a human individual.
 - No pressure or urgency. End the body with this exact opt-out sentence: "${optOut}"
 - Deliverability (mandatory): no links, no attachments, no prices, no ALL CAPS, no exclamation marks, no emojis; the subject is short (max 7 words), natural and
