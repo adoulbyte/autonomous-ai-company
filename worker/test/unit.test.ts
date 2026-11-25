@@ -318,3 +318,12 @@ describe('geographic plan chosen by the marketing strategist', () => {
     expect(areaAt({ country_weights: { GB: 2, FR: 1 }, zones_per_city: 1, cursor: 2 }).city).toBe(cities[2][0]);
   });
 });
+
+describe('delivery failures are never counted as prospect replies', () => {
+  it('recognises a bounce from its content even when the sender looks normal', async () => {
+    const { classifyAutomated } = await import('../src/agents/sales.js');
+    expect(classifyAutomated('notifications@mail.example', 'Votre message', 'Adresse introuvable\nVotre message n’a pas été distribué à contact@x.fr')).toBe('bounce');
+    expect(classifyAutomated('mailer-daemon@googlemail.com', 'Delivery Status Notification (Failure)', '')).toBe('bounce');
+    expect(classifyAutomated('salon@x.fr', 'Re: votre site', 'Bonjour, oui ça m’intéresse')).toBeNull();
+  });
+});

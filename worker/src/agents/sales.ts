@@ -164,7 +164,8 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
 /** Bounce = the address does not exist; autoreply = out-of-office. Both are machine-generated. */
 export function classifyAutomated(from: string, subject: string, body: string): 'bounce' | 'autoreply' | null {
   const f = from.toLowerCase(); const s = subject.toLowerCase();
-  if (/mailer-daemon|postmaster|mail delivery (sub)?system/.test(f) || /(undeliverable|undelivered|delivery status notification|delivery has failed|mail delivery failed|returned mail|non remis|non distribu|échec de (la )?(remise|distribution)|adresse introuvable)/.test(s)) return 'bounce';
+  if (/mailer-daemon|postmaster|mail delivery (sub)?system/.test(f) || /(undeliverable|undelivered|delivery status notification|delivery has failed|mail delivery failed|returned mail|non remis|non distribu|échec de (la )?(remise|distribution)|adresse introuvable|address not found)/.test(s)
+    || /(adresse introuvable|address not found|user unknown|550[ -]5\.1\.1|mailbox (does not exist|unavailable)|recipient address rejected)/i.test(body.slice(0, 3000))) return 'bounce';
   if (/(automatic reply|auto(matic)?[- ]?reply|réponse automatique|absence|out of office|en congé|congés)/.test(s) || /^(no-?reply|noreply)@/.test(f) || /\bauto-submitted:\s*auto/i.test(body)) return 'autoreply';
   return null;
 }

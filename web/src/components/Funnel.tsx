@@ -10,7 +10,7 @@ export function Funnel() {
     const c = async (b: any) => { const { count, error } = await b; if (error) throw new Error(error.message); return count ?? 0; };
     const [sent, replies, interested, won, stopped, bounced, paid, strategy] = await Promise.all([
       c(supabase.from('messages').select('id', { count: 'exact', head: true }).eq('direction', 'outbound').eq('status', 'sent').like('idempotency_key', 'outreach:%')),
-      c(supabase.from('messages').select('id, conversations!inner(lead_id)', { count: 'exact', head: true }).eq('direction', 'inbound').not('conversations.lead_id', 'is', null).is('classification->>automated', null)),
+      c(supabase.from('messages').select('id, conversations!inner(lead_id)', { count: 'exact', head: true }).eq('direction', 'inbound').not('conversations.lead_id', 'is', null).not('classification', 'is', null).is('classification->>automated', null)),
       c(supabase.from('leads').select('id', { count: 'exact', head: true }).in('stage', ['engaged', 'proposal', 'negotiating', 'won'])),
       c(supabase.from('leads').select('id', { count: 'exact', head: true }).eq('stage', 'won')),
       c(supabase.from('leads').select('id', { count: 'exact', head: true }).eq('lost_reason', 'unsubscribed')),

@@ -21,9 +21,14 @@ async function load() {
     count('opportunities', (b) => b.gte('discovered_at', today)),
     count('messages', (b) => b.eq('direction', 'outbound').eq('status', 'sent').like('to_addr', '%@%')),
     count('messages', (b) => b.eq('direction', 'outbound').eq('status', 'sent').like('to_addr', '%@%').gte('sent_at', today)),
-    // Only real replies to our prospecting (inbound emails in a conversation with a prospect), not Google/vendor notifications.
-    (async () => { const { count, error } = await supabase.from('messages').select('id, conversations!inner(lead_id)', { count: 'exact', head: true })
-      .eq('direction', 'inbound').not('conversations.lead_id', 'is', null).is('classification->>automated', null); if (error) throw new Error(error.message); return count ?? 0; })(),
+    // Only real replies from prospects (not bounces "adresse introuvable", not out-of-office), split into new (unread) and total.
+    (async () => {
+      const base = () => supabase.from('messages').select('id, conversations!inner(lead_id)', { count: 'exact', head: true })
+        .eq('direction', 'inbound').not('conversations.lead_id', 'is', null).not('classification', 'is', null).is('classification->>automated', null);
+      const [all, fresh] = await Promise.all([base(), base().is('read_at', null)]);
+      if (all.error) throw new Error(all.error.message); if (fresh.error) throw new Error(fresh.error.message);
+      return { total: all.count ?? 0, unread: fresh.count ?? 0 };
+    })(),
     count('projects', (b) => b.in('status', ['planning', 'in_progress', 'in_qa', 'revision', 'ready_for_delivery'])),
     count('projects', (b) => b.in('status', ['delivered', 'accepted', 'closed'])),
     q<Row[]>(supabase.from('messages').select('id,to_addr,subject,sent_at').eq('direction', 'outbound').eq('status', 'sent').like('to_addr', '%@%').order('sent_at', { ascending: false }).limit(8)),
@@ -54,7 +59,7 @@ export function CommandCenter() {
       <div className="grid grid-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
         <Stat label="Entreprises trouvées" value={num(data.found)} sub={`${data.foundToday} aujourd’hui`} />
         <Stat label="E-mails envoyés" value={num(data.sentTotal)} sub={`${data.sentToday} aujourd’hui`} accent />
-        <Stat label="Réponses de prospects" value={num(data.replies)} />
+        <Link to="/communications" style={{ color: 'inherit', textDecoration: 'none' }}><Stat label="Nouvelles réponses de prospects" value={num(data.replies.unread)} accent={data.replies.unread > 0} sub={`${data.replies.total} au total · cliquer pour lire`} /></Link>
         <Stat label="Projets" value={num(data.activeProjects)} sub={`${data.delivered} livrés`} />
         <Stat label="Avis clients" value={avg ? `${avg} / 5` : '—'} sub={`${data.reviews.length} avis`} />
         <Stat label="Encaissé" value={money(f.confirmed_revenue_minor, data.base)} sub={`${money(f.receivable_minor, data.base)} en attente`} />
