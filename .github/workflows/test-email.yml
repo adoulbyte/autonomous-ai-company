@@ -9,6 +9,9 @@ on:
       trade:
         description: 'for mode mockup: shop=bakery, shop=hairdresser, amenity=restaurant or craft=plumber'
         default: shop=bakery
+      reminder:
+        description: 'for mode mockup: 1 = show the reminder version (3 buttons)'
+        default: '0'
 permissions: { contents: read, models: read }
 jobs:
   send:
@@ -32,6 +35,7 @@ jobs:
           OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
           TEST_MODE: ${{ inputs.mode }}
           TEST_TRADE: ${{ inputs.trade }}
+          TEST_REMINDER: ${{ inputs.reminder }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
