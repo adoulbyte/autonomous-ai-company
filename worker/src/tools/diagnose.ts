@@ -32,6 +32,9 @@ try {
       left join lateral (select m.status from public.messages m join public.conversations c on c.id = m.conversation_id where c.lead_id = l.id and m.idempotency_key like 'outreach:%' limit 1) m on true
       left join lateral (select t.status, t.error from public.tasks t where t.entity_id::text = l.id::text and t.type like 'lead.%' and t.type not in ('lead.followup','lead.mockup','lead.proposal_reminder','lead.respond') order by t.created_at desc limit 1) t on true
       where l.stage in ('new','qualified') group by 1,2,3,4 order by 5 desc`.catch((e) => String(e.message)));
+  show('first-email drafting failures by cause', await sql`select case when error ~* 'quality bar' then 'review score too low twice' when error ~* 'compliance gate' then 'compliance/spam gate: ' || coalesce(substring(error from 'gate: ([a-z /-]{3,40})'), '?')
+      when error ~* 'timeout|timed out' then 'timeout' when error ~* 'no AI model|unavailable|rate' then 'AI providers unavailable' else 'other' end cause, attempts, count(*)::int n, max(created_at) last
+      from public.tasks where type = 'lead.draft_outreach' and status = 'dead' group by 1, 2`.catch((e) => String(e.message)));
   show('first emails sent today vs daily cap', await sql`select (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'outreach:%' and sent_at >= date_trunc('day', now())) sent_today,
       (select count(*)::int from public.messages where direction = 'outbound' and status = 'approved' and idempotency_key like 'outreach:%') approved_waiting,
       (select value from public.settings where key = 'prospecting.policy') policy`.catch((e) => String(e.message)));
