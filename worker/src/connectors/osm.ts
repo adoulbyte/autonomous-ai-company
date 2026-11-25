@@ -132,7 +132,7 @@ export function toProspect(el: OsmEl, city: string, country = 'FR', language = '
   const address = [t['addr:housenumber'], t['addr:street'], t['addr:postcode'], t['addr:city'] ?? city].filter(Boolean).join(' ');
   const text = [`Entreprise : ${t.name}`, `Activité : ${category}`, `Ville : ${t['addr:city'] ?? city}`, address ? `Adresse : ${address}` : null,
     `Site web : ${website ?? 'aucun site web référencé'}`, email ? `E-mail professionnel publié : ${email}` : null,
-    t.opening_hours ? `Horaires : ${t.opening_hours}` : null, t.description ? `Description : ${t.description}` : null].filter(Boolean).join('\n');
+    t.opening_hours ? `Horaires : ${t.opening_hours}` : null, (t.phone ?? t['contact:phone']) ? `Téléphone : ${t.phone ?? t['contact:phone']}` : null, t.description ? `Description : ${t.description}` : null].filter(Boolean).join('\n');
   return {
     externalId: el.type === 'wikidata' ? `wikidata:Q${el.id}` : `osm:${el.type}/${el.id}`,
     url: el.type === 'wikidata' ? `https://www.wikidata.org/wiki/Q${el.id}` : `https://www.openstreetmap.org/${el.type}/${el.id}`,

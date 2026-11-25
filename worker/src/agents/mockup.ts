@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AiGateway } from '../ai/gateway.js';
 import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { PermanentError } from '../errors.js';
@@ -13,8 +14,9 @@ import { staticChecks } from './production.js';
 import { renderHtml } from '../email/template.js';
 import { renderBrochurePdf } from '../email/brochure.js';
 import { screenshotHtml } from '../render/screenshot.js';
+import { findPhotos, generatePhoto, tradeProfile } from '../render/photos.js';
+import { factsFromListing, PostContentSchema, renderPost, renderSite, SiteContentSchema, type PostContent, type SiteContent } from '../render/site.js';
 
-const PageSchema = z.object({ html: z.string().min(400).max(90000), summary: z.string().max(400) });
 const ReviewSchema = z.object({ score: z.number().min(0).max(10), issues: z.array(z.string().max(300)).max(10) });
 
 const MAIL: Record<string, { subject: string; site: string; post: string; offer: (label: string, price: string, days: number) => string; free: (label: string, days: number) => string; next: string; brochure: string; preview: string }> = {
@@ -56,36 +58,8 @@ export const prospectMockup: Handler = async (ctx) => {
   const a = (l.analysis ?? {}) as { need?: string; language?: string; category?: string; city?: string };
   const lang = a.language ?? 'fr'; const need = a.need === 'website' ? 'website' : 'marketing';
   const [msg] = await ctx.sql`select m.body, m.conversation_id from public.messages m where m.id = ${ctx.task.input.message_id ?? null}`;
-  const langName = ({ fr: 'French', en: 'English', nl: 'Dutch', pt: 'Portuguese' } as Record<string, string>)[lang] ?? 'English';
-  const brief = need === 'website'
-    ? `A one-page showcase website (complete single HTML file with inline CSS, mobile friendly, no external resources, no JavaScript, no images: use colours, gradients and simple inline SVG icons).`
-    : `ONE social-media post visual as a complete HTML document whose body is a 1080x1080 square design (inline CSS, no external resources, no JavaScript, no images: colours, typography and simple inline SVG shapes).`;
-  const prompt = `${skillsFor('production', need === 'website' ? 'html website vitrine' : 'design visual social post')}
-
-Create a free preview for this local business. ${brief}
-Language of all texts: ${langName}. Use ONLY facts from the listing and the client's message below (name, trade, address, opening hours, phone, email).
-Never invent prices, reviews, awards, staff names or opening hours; where information is missing, write neutral texts (e.g. "Découvrez nos spécialités") instead of fake facts.
-Make it look professional and specific to the trade (${a.category ?? ''}) and city (${a.city ?? ''}). Return JSON {html, summary}.
-
-${untrusted('business-listing', String(l.listing ?? l.title), 3000)}
-${untrusted('client-message', String(msg?.body ?? ''), 2000)}`;
-  let res = await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'strong', allowDowngrade: true, schema: PageSchema, maxTokens: 7000, temperature: 0.5,
-    messages: [{ role: 'user', content: prompt }] });
-  for (let round = 0; round < 2; round++) {
-    const issues = staticChecks(res.data.html, 'html').filter((i) => need === 'website' || !/viewport/.test(i));
-    const review = await ctx.ai.generate({ roleKey: 'qa_reviewer', taskId: ctx.task.id, tier: 'standard', schema: ReviewSchema, maxTokens: 600, temperature: 0, avoidModel: res.model,
-      messages: [{ role: 'user', content: `${skillsFor('qa', 'html website design')}
-Review this free preview for a local business as a demanding designer. Score 0-10: visual quality, readability on mobile, correct ${langName},
-no invented facts (only the listing below), no placeholder text, no broken layout. Return JSON {score, issues}.
-${untrusted('preview-html', res.data.html.slice(0, 30000), 30000)}
-${untrusted('business-listing', String(l.listing ?? l.title), 2000)}` }] });
-    const all = [...issues, ...review.data.issues];
-    if (review.data.score >= 7 && issues.length === 0) break;
-    if (round === 1) throw new Error(`mockup below quality bar (score ${review.data.score})`);
-    res = await ctx.ai.generate({ roleKey: 'specialist_worker', taskId: ctx.task.id, tier: 'strong', allowDowngrade: true, schema: PageSchema, maxTokens: 7000, temperature: 0.4,
-      messages: [{ role: 'user', content: `${prompt}\n\nA reviewer found these problems in your previous version; fix all of them:\n${all.map((i) => `- ${i}`).join('\n')}` }] });
-  }
-  const shots = await screenshotHtml(res.data.html, ctx.env);
+  const { html, content, photos, shots, model } = await buildPreview({ ai: ctx.ai, taskId: ctx.task.id, env: ctx.env, fetchFn: ctx.fetchFn,
+    listing: String(l.listing ?? l.title), name: String(l.buyer_name ?? ''), category: a.category, city: a.city, lang, need, email: l.contact_email, clientMessage: String(msg?.body ?? '') });
   const id = await identity(ctx.sql);
   const cat = await getCatalog(ctx.sql);
   const item = cat.items[need === 'website' ? 'website' : 'social_pack'] ?? Object.values(cat.items)[0];
@@ -97,11 +71,11 @@ ${untrusted('business-listing', String(l.listing ?? l.title), 2000)}` }] });
   const body = [greet, (need === 'website' ? t.site : t.post).replace('{name}', name), (free ? t.free(item.label[lang] ?? item.label.en ?? '', item.days) : t.offer(item.label[lang] ?? item.label.en ?? '', price, item.days)), ...(free ? [] : [t.next]), t.brochure].join('\n\n');
   const imgs = shots ? `<div style="margin:6px 0 18px"><div style="font-size:12px;color:#6b6f78;margin-bottom:8px">${t.preview}</div>
 <img src="cid:mockup-desktop" alt="" width="544" style="display:block;width:100%;max-width:544px;border:1px solid #e7e4dd;border-radius:8px;margin-bottom:12px">
-${need === 'website' ? '<img src="cid:mockup-mobile" alt="" width="220" style="display:block;width:220px;border:1px solid #e7e4dd;border-radius:12px">' : ''}</div>` : '';
+${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display:block;width:220px;border:1px solid #e7e4dd;border-radius:12px">' : ''}</div>` : '';
   const brochure = await renderBrochurePdf(id, cat, lang, ctx.mail?.address ?? '');
   const attachments = [
     ...(shots ? [{ filename: 'apercu-ordinateur.jpg', content_b64: shots.desktop.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-desktop' }] : []),
-    ...(shots && need === 'website' ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
+    ...(shots?.mobile ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
     { filename: `${id.company_name.replace(/[^\w-]+/g, '-')}-plaquette.pdf`, content_b64: brochure.toString('base64'), contentType: 'application/pdf' },
   ];
   return finish(ctx, async (tx) => {
@@ -120,9 +94,63 @@ ${need === 'website' ? '<img src="cid:mockup-mobile" alt="" width="220" style="d
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
     await autoApproveIfPolicy(tx, approvalId);
     await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency},
-        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: res.data.html, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
+        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
         where id = ${leadId}`;
     if (['contacted', 'engaged'].includes(String(l.stage))) await tx`update public.leads set stage = 'proposal' where id = ${leadId}`;
-    return { message_id: out.id, screenshots: !!shots, model: res.model };
+    return { message_id: out.id, screenshots: !!shots, model };
   });
 };
+
+export type PreviewInput = { ai: Pick<AiGateway, 'generate'>; taskId?: string; env: NodeJS.ProcessEnv; fetchFn?: typeof fetch; listing: string; name: string;
+  category?: string | null; city?: string | null; lang: string; need: 'website' | 'marketing'; email?: string | null; clientMessage: string };
+
+/** Texts by the AI (reviewed by another model), real photos of the trade, professional template, screenshots. */
+export async function buildPreview(o: PreviewInput) {
+  const { ai, taskId, env, listing, name, lang, need, email, clientMessage } = o;
+  const a = { category: o.category ?? undefined, city: o.city ?? undefined };
+  const langName = ({ fr: 'French', en: 'English', nl: 'Dutch', pt: 'Portuguese' } as Record<string, string>)[lang] ?? 'English';
+  const facts = factsFromListing(listing, name, a.city, email);
+  const profile = tradeProfile(a.category);
+  const brief = need === 'website'
+    ? `the texts of a modern one-page showcase website (hero, services, about, highlights, call to action). The layout, colours and photos are handled by our designers: write ONLY the texts, as JSON with exactly these keys:
+{tagline (short eyebrow, e.g. trade + city), hero_title (punchy, max 8 words), hero_text (1-2 sentences), cta (button label, e.g. "Nous contacter" or "Réserver"),
+ services_title, services_intro, services: [3 to 6 × {title, text}] (typical offer of this trade, described generically, without prices),
+ about_title, about_text (2 short paragraphs separated by a blank line, warm and specific to the trade and the city),
+ highlights: [3 × {title, text}] (e.g. savoir-faire, local, welcome), cta_title, cta_text, photo_keywords: [2-4 English stock-photo searches for THIS trade]}`
+    : `the texts of ONE social-media post (square visual) promoting this business. The layout, colours and photo are handled by our designers: write ONLY the texts, as JSON
+{headline (max 7 words), text (one sentence), bullets: [2-3 very short benefits], cta (short), photo_keywords: [2-4 English stock-photo searches for THIS trade]}`;
+  const prompt = `${skillsFor('production', need === 'website' ? 'html website vitrine copywriting' : 'design visual social post copywriting')}
+
+Create a free preview for this local business: write ${brief}
+Language of all texts (except photo_keywords): ${langName}. Use ONLY facts from the listing and the client's message below (name, trade, city).
+Never invent prices, reviews, ratings, awards, years of experience, staff names, phone numbers or opening hours; keep claims generic and true for any good business of this trade.
+Tone: professional, warm, concrete, no clichés, no exclamation marks overload. Trade: ${a.category ?? ''}. City: ${a.city ?? ''}.
+
+${untrusted('business-listing', listing, 3000)}
+${untrusted('client-message', clientMessage, 2000)}`;
+  const schema = (need === 'website' ? SiteContentSchema : PostContentSchema) as z.ZodType<SiteContent | PostContent>;
+  let res = await ai.generate({ roleKey: 'specialist_worker', taskId, tier: 'strong', allowDowngrade: true, schema, maxTokens: 3000, temperature: 0.6,
+    messages: [{ role: 'user', content: prompt }] });
+  for (let round = 0; round < 2; round++) {
+    const review = await ai.generate({ roleKey: 'qa_reviewer', taskId, tier: 'standard', schema: ReviewSchema, maxTokens: 600, temperature: 0, avoidModel: res.model,
+      messages: [{ role: 'user', content: `${skillsFor('qa', 'website copywriting')}
+Review this free preview for a local business as a demanding copywriter. Score 0-10: persuasive and specific to the trade, correct ${langName} (spelling, grammar),
+no invented facts (prices, reviews, years, names, hours not in the listing), no placeholder text, consistent tone. Return JSON {score, issues}.
+${untrusted('preview-texts', JSON.stringify(res.data).slice(0, 12000), 12000)}
+${untrusted('business-listing', listing, 2000)}` }] });
+    if (review.data.score >= 7) break;
+    if (round === 1) throw new Error(`mockup below quality bar (score ${review.data.score})`);
+    res = await ai.generate({ roleKey: 'specialist_worker', taskId, tier: 'strong', allowDowngrade: true, schema, maxTokens: 3000, temperature: 0.5,
+      messages: [{ role: 'user', content: `${prompt}\n\nA reviewer found these problems in your previous version; fix all of them:\n${review.data.issues.map((i) => `- ${i}`).join('\n')}` }] });
+  }
+  // Real photos of the trade (searches from our trade profile first, then the AI's suggestions).
+  const fetchFn = o.fetchFn ?? fetch;
+  const queries = [...new Set([...profile.queries.slice(0, 2), ...res.data.photo_keywords, ...profile.queries.slice(2)])];
+  let photos = await findPhotos(queries, need === 'website' ? 10 : 1, env, fetchFn);
+  if (!photos.length) { const g = await generatePhoto(`${queries[0]}, ${a.city ?? ''}`, env, fetchFn); if (g) photos = [g]; }
+  const html = need === 'website' ? renderSite(res.data as SiteContent, facts, photos, profile.theme, lang) : renderPost(res.data as PostContent, facts, photos, profile.theme, lang);
+  const problems = staticChecks(html, 'html').filter((i) => need === 'website' || !/viewport/.test(i));
+  if (problems.length) throw new Error(`mockup failed static checks: ${problems.join('; ').slice(0, 300)}`);
+  const shots = await screenshotHtml(html, env, need === 'website' ? 'site' : 'post');
+  return { html, content: res.data, photos, shots, model: res.model };
+}

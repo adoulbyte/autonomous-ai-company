@@ -36,8 +36,13 @@ const ai: Responder = (prompt) => {
     body: 'Bonjour,\n\nNous avons vu votre adresse professionnelle sur votre fiche publique. Nous lançons notre studio et proposons de créer gratuitement un site vitrine simple et moderne pour votre commerce, en échange d\'un avis honnête. Vous verrez un aperçu avant toute décision.\n\nSouhaitez-vous que nous commencions ? Répondez simplement « oui ».\n\nSi vous ne souhaitez plus recevoir de message de notre part, répondez simplement STOP.',
     claims_made: [], questions_for_buyer: [] } };
   if (prompt.includes('Review this outreach email')) return { body: { score: 9, issues: [], verdict: 'send' } };
-  if (prompt.includes('Create a free preview for this local business')) return { body: { summary: 'One-page site',
-    html: '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Salon</title><style>body{font-family:Arial;margin:0}header{background:#222;color:#fff;padding:40px}</style></head><body><header><h1>Salon Coiffure Belle</h1><p>Votre salon de coiffure à Lyon</p></header><main><section><h2>Nos services</h2><p>Coupe, couleur et soins pour toute la famille.</p></section><section><h2>Contact</h2><p>salon.belle@mail.example</p></section></main></body></html>' } };
+  if (prompt.includes('Create a free preview for this local business')) return { body: { tagline: 'Coiffure · Lyon', hero_title: 'Votre style, notre savoir-faire',
+    hero_text: 'Un salon chaleureux au cœur de Lyon pour des coupes et des couleurs qui vous ressemblent.', cta: 'Prendre rendez-vous',
+    services_title: 'Nos prestations', services_intro: 'Des soins adaptés à chacun.', services: [{ title: 'Coupe', text: 'Une coupe pensée pour votre visage et votre quotidien.' },
+      { title: 'Couleur', text: 'Des nuances naturelles ou audacieuses, réalisées avec soin.' }, { title: 'Soins', text: 'Des soins pour des cheveux forts et brillants.' }],
+    about_title: 'Un salon de quartier', about_text: 'Nous accueillons chaque client avec attention, pour un moment de détente et un résultat qui dure.\n\nConseils personnalisés et produits de qualité.',
+    highlights: [{ title: 'Écoute', text: 'Des conseils adaptés.' }, { title: 'Qualité', text: 'Des produits choisis.' }, { title: 'Proximité', text: 'Au cœur du quartier.' }],
+    cta_title: 'Envie de changement ?', cta_text: 'Écrivez-nous.', photo_keywords: ['hair salon'] } };
   if (prompt.includes('Review this free preview')) return { body: { score: 9, issues: [] } };
   if (prompt.includes('Classify this inbound message')) return { body: { category: 'prospect_reply', intent: 'neutral', priority: 'normal', summary: 'reply', reply_draft: null } };
   return { status: 500, body: { error: 'unexpected prompt' } };
