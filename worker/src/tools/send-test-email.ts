@@ -13,6 +13,26 @@ if (!to || !mail) { console.error('OWNER_EMAIL and the Gmail secrets are require
 const sql = connect(loadConfig().databaseUrl);
 try {
   const id = await getSetting<Identity>(sql, 'business.identity', {} as Identity);
+  if (process.env.TEST_MODE === 'buttons') {
+    // Diagnostic: personal-looking email (no header, no hidden text, no image) with quick-reply buttons, in two button styles.
+    const cat = await getCatalog(sql);
+    const cta = prospectCta(mail.address, 'fr', cat);
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const intro = `<p>Bonjour,</p><p>C'est un message de vérification envoyé par ta plateforme, avec des boutons de réponse rapide.</p><p>Peux-tu me dire s'il est arrivé dans la boîte de réception ou dans les spams ?</p>`;
+    const sig = `<p>${esc(id.signature).replace(/\n/g, '<br>')}</p>`;
+    const variants: [string, string][] = [
+      ['Petite question (A)', `${intro}<p><a href="${esc(cta.yes.href)}">${esc(cta.yes.label)}</a><br><a href="${esc(cta.no.href)}">${esc(cta.no.label)}</a></p>${sig}`],
+      ['Petite question (B)', `${intro}<p><a href="${esc(cta.yes.href)}" style="display:inline-block;padding:10px 16px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold">${esc(cta.yes.label)}</a>&nbsp;&nbsp;<a href="${esc(cta.no.href)}" style="display:inline-block;padding:9px 14px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:6px">${esc(cta.no.label)}</a></p>${sig}`],
+    ];
+    for (const [subject, body] of variants) {
+      await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject,
+        text: `Bonjour,\n\nC'est un message de vérification envoyé par ta plateforme, avec des boutons de réponse rapide.\nPeux-tu me dire s'il est arrivé dans la boîte de réception ou dans les spams ?\n\n${id.signature}`,
+        html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#202124">${body}</div>` });
+      await new Promise((r) => setTimeout(r, 20000));
+    }
+    console.log('2 button test emails sent');
+    process.exit(0);
+  }
   if (process.env.TEST_MODE === 'plain') {
     // Diagnostic: a short plain-text email, no HTML, no link, no button — tells whether content or reputation decides.
     await mail.send({ from: `"${id.sender_name}" <${mail.address}>`, to, subject: 'Petite question',

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'designed (2 sample emails) or plain (one short plain-text email)'
+        description: 'designed (2 sample emails), plain (one short plain-text email) or buttons (2 variants with quick-reply buttons)'
         default: designed
 permissions: { contents: read }
 jobs:
