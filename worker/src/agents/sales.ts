@@ -140,7 +140,7 @@ ${untrusted(isProspect ? 'business-listing' : 'client-request', String(evidence[
           classification)
         values (${conv.id}, 'outbound', 'draft', ${to}, ${res.data.subject}, ${body}, ${ctx.task.id}, ${'outreach:' + leadId},
           ${tx.json({ claims_made: res.data.claims_made, questions: res.data.questions_for_buyer, model: res.model,
-            ...(isProspect ? { cta: { lang: a.language ?? 'fr' } } : {}) } as never)}) returning id`;
+            ...(isProspect ? { cta: { lang: a.language ?? 'fr', need: a.need ?? 'website' } } : {}) } as never)}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'message.send', title: `Send first message: ${String(lead.title).slice(0, 90)}`, requestedBy: 'sales_agent',
       reason: isProspect ? `Prospecting: ${lead.title}. The business published this professional email address.` : `Lead "${lead.title}" was approved for pursuit. This is the first reply to the buyer's public request.`,

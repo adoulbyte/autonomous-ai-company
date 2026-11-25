@@ -2,7 +2,7 @@ import type { Handler } from './context.js';
 import { finish } from './context.js';
 import { getSetting, logEvent, type Sql } from '../db.js';
 import { enqueue } from '../queue.js';
-import { prospectCta } from '../email/cta.js';
+import { prospectCta, prospectHighlights } from '../email/cta.js';
 import { getCatalog } from './pricing.js';
 import { LOGO_CID, logoAttachment, renderHtml, renderText, type Identity } from '../email/template.js';
 import { scrubSecrets } from '../sanitize.js';
@@ -60,9 +60,10 @@ export const sendOutbox: Handler = async (ctx) => {
       const prospecting = /^(outreach|followup):/.test(String(m.idempotency_key ?? ''));
       if (prospecting && sentOutreach > 0 && pacing) await new Promise((r) => setTimeout(r, 6000 + Math.random() * 9000));   // human-like pace
       if (prospecting && sentOutreach >= 12) continue;   // at most 12 prospecting emails per run; the rest go next cycle
-      const cls = (m.classification ?? {}) as { cta?: { lang: string } };
+      const cls = (m.classification ?? {}) as { cta?: { lang: string; need?: string } };
       const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql)) : undefined;
-      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), personal: prospecting, cta });
+      const highlights = cls.cta ? prospectHighlights(cls.cta.lang, cls.cta.need ?? 'website') : undefined;
+      const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, highlights, noImages: prospecting });
       const logo = html.includes(`cid:${LOGO_CID}`) ? logoAttachment(id) : null;
       const r = await ctx.mail.send({ from: `"${id.sender_name}" <${ctx.mail.address}>`, to: m.to_addr, subject: m.subject ?? m.conv_subject,
         text: renderText(m.body, id), html, inReplyTo: m.in_reply_to ?? refs.at(-1) ?? null, references: refs, attachments: logo ? [...attachments, logo] : attachments,
@@ -134,8 +135,10 @@ export const followUp: Handler = async (ctx) => {
     const [approval] = await tx`select public.request_approval(p_action_type => 'message.send', p_title => ${'Follow-up #' + n + ': ' + String(l.title).slice(0, 80)},
         p_requested_by => 'sales_agent', p_reason => 'No reply after the follow-up delay', p_if_approved => 'Follow-up is emailed', p_if_rejected => 'No follow-up',
         p_entity_type => 'lead', p_entity_id => ${leadId}, p_idempotency_key => ${'followup:' + leadId + ':' + n}) as id`;
-    await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, approval_id, idempotency_key)
-        values (${conv.id}, 'outbound', 'awaiting_approval', ${l.email}, ${'Re: ' + conv.subject}, ${body}, ${approval.id}, ${'followup:' + leadId + ':' + n}) on conflict (idempotency_key) do nothing`;
+    const a = (o?.analysis ?? {}) as { prospect?: boolean; need?: string };
+    const cls = a.prospect ? { cta: { lang: language, need: a.need ?? 'website' } } : null;
+    await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, approval_id, idempotency_key, classification)
+        values (${conv.id}, 'outbound', 'awaiting_approval', ${l.email}, ${'Re: ' + conv.subject}, ${body}, ${approval.id}, ${'followup:' + leadId + ':' + n}, ${cls ? tx.json(cls as never) : null}) on conflict (idempotency_key) do nothing`;
     await tx`select public.system_auto_approve(${approval.id})`;
     await tx`update public.leads set follow_ups_sent = ${n}, next_follow_up_at = ${n < policy.max_followups ? new Date(Date.now() + policy.followup_after_days * 86_400_000) : null} where id = ${leadId}`;
     return { followup: n };

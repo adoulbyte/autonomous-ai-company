@@ -1,4 +1,4 @@
-import type { Cta } from './template.js';
+import type { Cta, Highlights } from './template.js';
 import { catalogMenu, type Catalog } from '../agents/pricing.js';
 
 /** Reply buttons for a prospecting email. They open a pre-filled reply (mailto), so everything stays in the conversation:
@@ -28,4 +28,24 @@ export function prospectCta(mailbox: string, lang: string, catalog: Catalog): Ct
 /** A reply whose subject comes from the "interested" button. */
 export function isInterestedReply(subject: string): boolean {
   return /\b(intéress|interested|geïnteresseerd|geinteresseerd|interessad)/i.test(subject) && !/\bpas intéress|not interested|geen interesse|sem interesse/i.test(subject);
+}
+
+/** The offer at a glance, in the prospect's language (shown in a framed box above the buttons). */
+const H: Record<string, { title: string; website: string[]; marketing: string[] }> = {
+  fr: { title: 'Ce que nous pouvons faire pour vous',
+        website: ['Un site vitrine moderne, rapide et adapté au mobile', 'Vos services, horaires, contact et plan d’accès au même endroit', 'Un aperçu avant toute décision — devis gratuit, sans engagement'],
+        marketing: ['Des visuels prêts à publier sur vos réseaux sociaux', 'Flyers, menus ou tarifs mis en page en PDF', 'Un aperçu avant toute décision — devis gratuit, sans engagement'] },
+  en: { title: 'What we can do for you',
+        website: ['A modern, fast, mobile-friendly showcase website', 'Your services, opening hours, contact and map in one place', 'A preview before any decision — free quote, no obligation'],
+        marketing: ['Ready-to-post visuals for your social media', 'Flyers, menus or price lists designed as PDF', 'A preview before any decision — free quote, no obligation'] },
+  nl: { title: 'Wat wij voor u kunnen doen',
+        website: ['Een moderne, snelle website die goed werkt op mobiel', 'Uw diensten, openingstijden, contact en route op één plek', 'Eerst een voorbeeld — gratis en vrijblijvende offerte'],
+        marketing: ['Kant-en-klare visuals voor uw sociale media', 'Flyers, menu’s of prijslijsten als PDF', 'Eerst een voorbeeld — gratis en vrijblijvende offerte'] },
+  pt: { title: 'O que podemos fazer por si',
+        website: ['Um site moderno, rápido e adaptado ao telemóvel', 'Os seus serviços, horário, contacto e mapa num só lugar', 'Uma pré-visualização antes de decidir — orçamento grátis, sem compromisso'],
+        marketing: ['Visuais prontos a publicar nas redes sociais', 'Folhetos, menus ou tabelas de preços em PDF', 'Uma pré-visualização antes de decidir — orçamento grátis, sem compromisso'] },
+};
+export function prospectHighlights(lang: string, need: string): Highlights {
+  const h = H[lang] ?? H.en;
+  return { title: h.title, items: need === 'website' ? h.website : h.marketing };
 }

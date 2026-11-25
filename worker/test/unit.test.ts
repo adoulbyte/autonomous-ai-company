@@ -297,3 +297,14 @@ describe('reply buttons in prospecting emails', () => {
     expect(isInterestedReply('Pas intéressé')).toBe(false);
   });
 });
+
+describe('email design', () => {
+  const id = { company_name: 'Test Studio', sender_name: 'T', tagline: 't', website: '', signature: 'J. Doe\nTest Studio', ai_disclosure: 'd',
+    logo_data_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' };
+  it('first contacts are designed but carry no image; later emails show the logo', () => {
+    const cold = renderHtml('Bonjour\n\nSi vous ne souhaitez plus recevoir de message, répondez STOP.', id, { noImages: true });
+    expect(cold).not.toContain('cid:');
+    expect(cold).toContain('Test Studio');
+    expect(renderHtml('Bonjour', id)).toContain('cid:company-logo');
+  });
+});
