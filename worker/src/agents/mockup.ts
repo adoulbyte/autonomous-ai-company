@@ -12,6 +12,7 @@ import { getMode, isPilot } from '../mode.js';
 import { identity } from './comms.js';
 import { staticChecks } from './production.js';
 import { renderHtml } from '../email/template.js';
+import { proposalCta } from '../email/cta.js';
 import { renderBrochurePdf } from '../email/brochure.js';
 import { screenshotHtml } from '../render/screenshot.js';
 import { findPhotos, generatePhoto, tradeProfile } from '../render/photos.js';
@@ -23,26 +24,26 @@ const MAIL: Record<string, { subject: string; site: string; post: string; offer:
   fr: { subject: 'Votre maquette', site: 'Comme promis, voici la maquette de votre site, préparée spécialement pour {name} (aperçu ci-dessous, sur ordinateur et sur téléphone).',
         post: 'Comme promis, voici un exemple de visuel préparé spécialement pour {name} (aperçu ci-dessous).',
         offer: (l, p, d) => `Notre proposition : ${l} pour ${p}, prêt en ${d} jour${d > 1 ? 's' : ''}. Tout reste modifiable : textes, couleurs, photos.`,
-        free: (l, d) => `Comme annoncé dans notre premier message, la réalisation (${l}) vous est offerte, prête en ${d} jour${d > 1 ? 's' : ''} ; nous vous demanderons simplement un avis honnête. Tout reste modifiable : textes, couleurs, photos. Pour lancer la réalisation, répondez simplement « oui ».`,
-        next: 'Pour lancer la réalisation, il suffit de répondre « oui ». Nous vous montrons le résultat terminé avant d’envoyer la facture ; les fichiers sont livrés dès réception du paiement.',
+        free: (l, d) => `Comme annoncé dans notre premier message, la réalisation (${l}) vous est offerte, prête en ${d} jour${d > 1 ? 's' : ''} ; nous vous demanderons simplement un avis honnête. Tout reste modifiable : textes, couleurs, photos. Cliquez ci-dessous pour lancer la réalisation, ou choisissez « Peut-être plus tard ».`,
+        next: 'La maquette vous plaît ? Cliquez sur le bouton ci-dessous : nous finalisons le site avec vos textes et vos photos, vous le validez, puis nous vous envoyons la facture. Ce n’est pas le bon moment ? Choisissez « Peut-être plus tard », sans aucun engagement.',
         brochure: 'Vous trouverez notre plaquette en pièce jointe.', preview: 'Aperçu sur ordinateur et sur téléphone' },
   en: { subject: 'Your preview', site: 'As promised, here is the preview of your website, prepared especially for {name} (desktop and phone views below).',
         post: 'As promised, here is a sample visual prepared especially for {name} (preview below).',
         offer: (l, p, d) => `Our proposal: ${l} for ${p}, ready in ${d} day${d > 1 ? 's' : ''}. Everything can be adjusted: texts, colours, photos.`,
-        free: (l, d) => `As announced in our first message, the work (${l}) is free of charge, ready in ${d} day${d > 1 ? 's' : ''}; we only ask for an honest review. Everything can be adjusted: texts, colours, photos. To go ahead, simply reply "yes".`,
-        next: 'To go ahead, simply reply "yes". We show you the finished result before sending the invoice; the files are delivered as soon as payment is received.',
+        free: (l, d) => `As announced in our first message, the work (${l}) is free of charge, ready in ${d} day${d > 1 ? 's' : ''}; we only ask for an honest review. Everything can be adjusted: texts, colours, photos. Click below to go ahead, or choose "Maybe later".`,
+        next: 'Do you like it? Click the button below: we finish it with your texts and photos, you approve it, and only then do we send the invoice. Not the right time? Choose "Maybe later", with no obligation.',
         brochure: 'Please find our brochure attached.', preview: 'Desktop and phone preview' },
   nl: { subject: 'Uw voorbeeld', site: 'Zoals beloofd, hier is het voorbeeld van uw website, speciaal gemaakt voor {name} (weergave op computer en telefoon hieronder).',
         post: 'Zoals beloofd, hier is een voorbeeldvisual speciaal gemaakt voor {name}.',
         offer: (l, p, d) => `Ons voorstel: ${l} voor ${p}, klaar in ${d} dag${d > 1 ? 'en' : ''}. Alles kan worden aangepast: teksten, kleuren, foto's.`,
-        free: (l, d) => `Zoals aangekondigd in ons eerste bericht is het werk (${l}) gratis, klaar in ${d} dag${d > 1 ? 'en' : ''}; we vragen alleen een eerlijke beoordeling. Alles kan worden aangepast. Antwoord gewoon "ja" om te starten.`,
-        next: 'Antwoord gewoon "ja" om te starten. We tonen u het eindresultaat voordat we de factuur sturen; de bestanden worden geleverd zodra de betaling binnen is.',
+        free: (l, d) => `Zoals aangekondigd in ons eerste bericht is het werk (${l}) gratis, klaar in ${d} dag${d > 1 ? 'en' : ''}; we vragen alleen een eerlijke beoordeling. Alles kan worden aangepast. Klik hieronder om te starten, of kies "Misschien later".`,
+        next: 'Bevalt het u? Klik op de knop hieronder: we werken het af met uw teksten en foto’s, u keurt het goed en pas daarna sturen we de factuur. Niet het juiste moment? Kies "Misschien later", zonder verplichting.',
         brochure: 'Onze brochure vindt u in de bijlage.', preview: 'Weergave op computer en telefoon' },
   pt: { subject: 'A sua maquete', site: 'Como prometido, eis a maquete do seu site, preparada especialmente para {name} (pré-visualização em computador e telemóvel abaixo).',
         post: 'Como prometido, eis um exemplo de visual preparado especialmente para {name}.',
         offer: (l, p, d) => `A nossa proposta: ${l} por ${p}, pronto em ${d} dia${d > 1 ? 's' : ''}. Tudo pode ser ajustado: textos, cores, fotografias.`,
-        free: (l, d) => `Como anunciado na nossa primeira mensagem, o trabalho (${l}) é gratuito, pronto em ${d} dia${d > 1 ? 's' : ''}; pedimos apenas uma avaliação honesta. Tudo pode ser ajustado. Para avançar, basta responder "sim".`,
-        next: 'Para avançar, basta responder "sim". Mostramos-lhe o resultado final antes de enviar a fatura; os ficheiros são entregues assim que o pagamento é recebido.',
+        free: (l, d) => `Como anunciado na nossa primeira mensagem, o trabalho (${l}) é gratuito, pronto em ${d} dia${d > 1 ? 's' : ''}; pedimos apenas uma avaliação honesta. Tudo pode ser ajustado. Clique abaixo para avançar, ou escolha "Talvez mais tarde".`,
+        next: 'Gostou? Clique no botão abaixo: finalizamos com os seus textos e fotos, aprova o resultado e só depois enviamos a fatura. Não é o momento certo? Escolha "Talvez mais tarde", sem compromisso.',
         brochure: 'Segue em anexo a nossa brochura.', preview: 'Pré-visualização em computador e telemóvel' },
 };
 
@@ -84,7 +85,7 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     const [c] = await tx`select subject from public.conversations where id = ${conv.id}`;
     const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
         values (${conv.id}, 'outbound', 'draft', ${l.contact_email}, ${'Re: ' + String(c?.subject ?? t.subject)}, ${body},
-          ${renderHtml(body, id, { preheader: t.preview, blocks: imgs })}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'mockup:' + leadId}) returning id`;
+          ${renderHtml(body, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need) })}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'mockup:' + leadId}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'message.send', title: `Maquette + devis : ${String(l.title).slice(0, 80)}`, requestedBy: 'specialist_worker',
       reason: 'The prospect asked to see the free preview; it passed an independent review.', riskLevel: 'low',
@@ -93,8 +94,8 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     });
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
     await autoApproveIfPolicy(tx, approvalId);
-    await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency},
-        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
+    await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency}, next_follow_up_at = now() + interval '5 days',
+        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, photos: photos.length, need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
         where id = ${leadId}`;
     if (['contacted', 'engaged'].includes(String(l.stage))) await tx`update public.leads set stage = 'proposal' where id = ${leadId}`;
     return { message_id: out.id, screenshots: !!shots, model };
@@ -154,3 +155,72 @@ ${untrusted('business-listing', listing, 2000)}` }] });
   const shots = await screenshotHtml(html, env, need === 'website' ? 'site' : 'post');
   return { html, content: res.data, photos, shots, model: res.model };
 }
+
+const REMIND: Record<string, { intro: (name: string) => string; again: string; last: string }> = {
+  fr: { intro: (n) => `Bonjour,\n\nJe reviens vers vous au sujet de la maquette préparée pour ${n}. Elle est toujours disponible, et notre proposition reste la même.`,
+        again: 'Vous retrouverez l’aperçu ci-dessous et notre plaquette en pièce jointe. Un simple clic sur l’un des boutons suffit pour nous indiquer votre choix.',
+        last: 'C’est notre dernier message à ce sujet : sans réponse, nous ne vous relancerons plus.' },
+  en: { intro: (n) => `Hello,\n\nI am getting back to you about the mockup we prepared for ${n}. It is still available, and our proposal remains the same.`,
+        again: 'You will find the preview below and our brochure attached. One click on a button is enough to let us know your choice.',
+        last: 'This is our last message on this subject: without a reply, we will not follow up again.' },
+  nl: { intro: (n) => `Goedendag,\n\nIk kom bij u terug over het voorbeeld dat we voor ${n} hebben gemaakt. Het is nog steeds beschikbaar en ons voorstel blijft hetzelfde.`,
+        again: 'Hieronder vindt u het voorbeeld en in de bijlage onze brochure. Eén klik op een knop volstaat om ons uw keuze te laten weten.',
+        last: 'Dit is ons laatste bericht hierover: zonder antwoord nemen we geen contact meer op.' },
+  pt: { intro: (n) => `Olá,\n\nVolto a contactá-lo sobre a maquete que preparámos para ${n}. Continua disponível e a nossa proposta mantém-se.`,
+        again: 'Encontra a pré-visualização abaixo e a nossa brochura em anexo. Basta um clique num dos botões para nos indicar a sua escolha.',
+        last: 'É a nossa última mensagem sobre este assunto: sem resposta, não voltaremos a contactá-lo.' },
+};
+export const MAX_PROPOSAL_REMINDERS = 3;
+
+/** lead.proposal_reminder — the same proposal again (preview, offer, brochure) with three buttons: go / later / not interested. */
+export const proposalReminder: Handler = async (ctx) => {
+  const leadId = String(ctx.task.input.lead_id);
+  const [l] = await ctx.sql`select l.*, o.analysis, o.buyer_name, k.email as contact_email, k.do_not_contact
+      from public.leads l join public.opportunities o on o.id = l.opportunity_id left join public.contacts k on k.id = l.contact_id where l.id = ${leadId}`;
+  const q = (l?.quote ?? {}) as { mockup_sent_at?: string; mockup_html?: string; need?: string; reminders?: number; free?: boolean; catalog?: string; price_minor?: number };
+  const n = Number(q.reminders ?? 0) + 1;
+  if (!l || l.stage !== 'proposal' || !q.mockup_sent_at || !l.contact_email || l.do_not_contact || n > MAX_PROPOSAL_REMINDERS) {
+    if (l) await ctx.sql`update public.leads set next_follow_up_at = null where id = ${leadId} and stage <> 'proposal'`;
+    return finish(ctx, async () => ({ skipped: 'not eligible' }));
+  }
+  const a = (l.analysis ?? {}) as { language?: string; need?: string };
+  const lang = a.language ?? 'fr'; const need = q.need === 'marketing' || a.need !== 'website' ? 'marketing' : 'website';
+  const t = MAIL[lang] ?? MAIL.en; const r = REMIND[lang] ?? REMIND.en;
+  const id = await identity(ctx.sql);
+  const cat = await getCatalog(ctx.sql);
+  const item = cat.items[q.catalog ?? (need === 'website' ? 'website' : 'social_pack')] ?? Object.values(cat.items)[0];
+  const price = `${(Number(q.price_minor ?? item.price_minor) / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency}`;
+  const label = item.label[lang] ?? item.label.en ?? '';
+  const offer = q.free ? t.free(label, item.days) : t.offer(label, price, item.days);
+  const body = [r.intro(String(l.buyer_name ?? '')), offer, r.again, ...(n === MAX_PROPOSAL_REMINDERS ? [r.last] : [])].join('\n\n');
+  const shots = q.mockup_html ? await screenshotHtml(q.mockup_html, ctx.env, need === 'website' ? 'site' : 'post') : null;
+  const imgs = shots ? `<div style="margin:6px 0 18px"><div style="font-size:12px;color:#6b6f78;margin-bottom:8px">${t.preview}</div>
+<img src="cid:mockup-desktop" alt="" width="544" style="display:block;width:100%;max-width:544px;border:1px solid #e7e4dd;border-radius:8px;margin-bottom:12px">
+${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display:block;width:220px;border:1px solid #e7e4dd;border-radius:12px">' : ''}</div>` : '';
+  const brochure = await renderBrochurePdf(id, cat, lang, ctx.mail?.address ?? '');
+  const attachments = [
+    ...(shots ? [{ filename: 'apercu-ordinateur.jpg', content_b64: shots.desktop.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-desktop' }] : []),
+    ...(shots?.mobile ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
+    { filename: `${id.company_name.replace(/[^\w-]+/g, '-')}-plaquette.pdf`, content_b64: brochure.toString('base64'), contentType: 'application/pdf' },
+  ];
+  const html = renderHtml(body, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need, true) });
+  return finish(ctx, async (tx) => {
+    const [conv] = await tx`select c.id, c.subject from public.conversations c where c.lead_id = ${leadId} order by c.updated_at desc limit 1`;
+    if (!conv) return { skipped: 'no conversation' };
+    const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
+        values (${conv.id}, 'outbound', 'draft', ${l.contact_email}, ${String(conv.subject ?? t.subject).startsWith('Re:') ? String(conv.subject) : 'Re: ' + String(conv.subject ?? t.subject)}, ${body},
+          ${html}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${`proposal-reminder:${leadId}:${n}`}) on conflict (idempotency_key) do nothing returning id`;
+    if (!out) return { skipped: 'already queued' };
+    const approvalId = await requestApproval(tx, {
+      actionType: 'message.send', title: `Rappel ${n} – proposition : ${String(l.title).slice(0, 70)}`, requestedBy: 'sales_agent',
+      reason: 'No decision yet on the proposal; same offer, with a "not interested" option.', riskLevel: 'low',
+      ifApproved: 'The reminder is emailed.', ifRejected: 'Nothing is sent.', entityType: 'message', entityId: out.id, taskId: ctx.task.id,
+      key: `message.send:${out.id}`, payload: { message_id: out.id },
+    });
+    await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
+    await autoApproveIfPolicy(tx, approvalId);
+    await tx`update public.leads set quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ reminders: n, last_reminder_at: new Date().toISOString() } as never)},
+        next_follow_up_at = ${n < MAX_PROPOSAL_REMINDERS ? new Date(Date.now() + 21 * 86_400_000) : null} where id = ${leadId}`;
+    return { reminder: n, screenshots: !!shots };
+  });
+};

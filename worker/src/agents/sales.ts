@@ -7,7 +7,7 @@ import { getSetting, logEvent } from '../db.js';
 import { skillsFor } from '../skills.js';
 import { getMode, isPilot } from '../mode.js';
 import { autoApproveIfPolicy, enqueue, requestApproval } from '../queue.js';
-import { isInterestedReply } from '../email/cta.js';
+import { isGoReply, isLaterReply, isInterestedReply } from '../email/cta.js';
 
 const EmailReviewSchema = z.object({ score: z.number().min(0).max(10), issues: z.array(z.string().max(300)).max(10), verdict: z.enum(['send', 'rewrite']) });
 
@@ -99,6 +99,8 @@ Rules (mandatory):
 - One clear next step: two small quick-reply buttons are added automatically under your text ("yes, show me the free mockup" / "not interested");
   invite the reader to use them or simply reply. Do not write the buttons yourself and do not list prices.
 - Honest only: no years of experience, past clients, testimonials, awards or portfolio. Do NOT pretend to be a human individual.
+- Psychology of a first contact: talk ONLY about them (their business, what their customers look for) and what we would create for them, then the free,
+  no-obligation mockup. Never mention price, cost, budget, payment, invoice, contract, AI, agents or automation in this first email.
 - No pressure or urgency. End the body with this exact opt-out sentence: "${optOut}"
 - Deliverability (mandatory): no links, no attachments, no prices, no ALL CAPS, no exclamation marks, no emojis; the subject is short (max 7 words), natural and
   personal, and must NOT contain words like free/gratuit/offert/gratis/promo/offer/discount/urgent/%/€.
@@ -198,8 +200,15 @@ export const triageMessage: Handler = async (ctx) => {
   // A plain STOP / unsubscribe reply is always honoured, without depending on any AI model.
   const optOut = /^\s*(stop|unsubscribe|remove me|d[ée]sabonn|d[ée]sinscri|ne plus (me )?(contacter|recevoir)|afmelden|uitschrijven|cancelar|remover|n[ãa]o quero)/i.test(String(m.body)) || /^\s*(re:\s*)?stop\b/i.test(String(m.subject ?? ''));
   const interested = !optOut && isInterestedReply(String(m.subject ?? ''));
+  const go = !optOut && isGoReply(String(m.subject ?? ''));
+  const [ldq] = m.lead_id ? await ctx.sql`select quote from public.leads where id = ${m.lead_id}` : [];
+  const later = !optOut && !go && !!(ldq?.quote as { mockup_sent_at?: string } | null)?.mockup_sent_at && isLaterReply(String(m.subject ?? ''), String(m.body ?? ''));
   const res = optOut
     ? { model: 'rule:opt-out', data: { category: 'prospect_reply', intent: 'unsubscribe', priority: 'normal', summary: 'Opt-out request (STOP)', reply_draft: null } as z.infer<typeof TriageSchema> }
+    : go
+    ? { model: 'rule:go-button', data: { category: 'prospect_reply', intent: 'positive', priority: 'high', summary: 'The prospect asks us to start the work (button)', reply_draft: null } as z.infer<typeof TriageSchema> }
+    : later
+    ? { model: 'rule:later-button', data: { category: 'prospect_reply', intent: 'neutral', priority: 'normal', summary: 'Maybe later: same proposal again in 30 days', reply_draft: null } as z.infer<typeof TriageSchema> }
     : interested
     ? { model: 'rule:interested-button', data: { category: 'prospect_reply', intent: 'positive', priority: 'high', summary: 'Quote request sent with the "interested" button', reply_draft: null } as z.infer<typeof TriageSchema> }
     : await ctx.ai.generate({ roleKey: 'communications', taskId: ctx.task.id, tier: 'fast', allowDowngrade: true, schema: TriageSchema,
@@ -231,6 +240,11 @@ Return JSON {category, intent, priority, summary, reply_draft|null}.\n\n${untrus
         await tx`update public.contacts set do_not_contact = true where id = (select contact_id from public.leads where id = ${m.lead_id})`;
         const [lead] = await tx`select stage from public.leads where id = ${m.lead_id}`;
         if (['contacted', 'engaged', 'proposal', 'negotiating', 'qualified'].includes(lead?.stage)) await tx`update public.leads set stage = 'lost', lost_reason = 'unsubscribed' where id = ${m.lead_id}`;
+      } else if (later) {
+        // "Maybe later": the prospect stays in the pipeline and receives the same proposal again in 30 days (with a "not interested" button).
+        await tx`update public.leads set stage = 'proposal', next_follow_up_at = now() + interval '30 days',
+            quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ later_at: new Date().toISOString() } as never)} where id = ${m.lead_id} and stage in ('proposal','negotiating','engaged')`;
+        await logEvent(tx, 'lead', String(m.lead_id), 'proposal_later', 'The prospect will decide later: reminder in 30 days');
       } else if (needsMockup && d.intent !== 'negative') {
         // A prospect who said yes to the free preview: build the personalised mockup and send it with the quote and the brochure.
         await enqueue(tx, { type: 'lead.mockup', key: `mockup:${m.lead_id}`, role: 'specialist_worker', entityType: 'lead', entityId: String(m.lead_id),

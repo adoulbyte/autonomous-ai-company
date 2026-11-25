@@ -60,3 +60,36 @@ export function prospectHighlights(lang: string, need: string): Highlights {
   const h = H[lang] ?? H.en;
   return { title: h.title, items: need === 'website' ? h.website : h.marketing };
 }
+
+/** Buttons under the proposal (mockup + offer): start the work, or later; reminders add "not interested". */
+const P: Record<string, { goSite: string; goPost: string; later: string; subjGo: string; subjLater: string; bodyGo: string; bodyLater: string }> = {
+  fr: { goSite: 'Je veux la réalisation de mon site', goPost: 'Je veux la réalisation', later: 'Peut-être plus tard', subjGo: 'Oui – je lance la réalisation', subjLater: 'Peut-être plus tard',
+        bodyGo: 'Bonjour,\n\nJe souhaite lancer la réalisation selon votre proposition.\n\nInformations utiles (textes, photos, horaires, couleurs…) :\n\n',
+        bodyLater: 'Bonjour,\n\nMerci pour la maquette. Ce n’est pas le bon moment pour moi, vous pouvez me recontacter plus tard.\n' },
+  en: { goSite: 'Yes, build my website', goPost: 'Yes, go ahead', later: 'Maybe later', subjGo: 'Yes – go ahead with the work', subjLater: 'Maybe later',
+        bodyGo: 'Hello,\n\nI would like you to go ahead with the work as proposed.\n\nUseful information (texts, photos, opening hours, colours…):\n\n',
+        bodyLater: 'Hello,\n\nThank you for the mockup. It is not the right time for me; you may contact me again later.\n' },
+  nl: { goSite: 'Ja, maak mijn website', goPost: 'Ja, ga van start', later: 'Misschien later', subjGo: 'Ja – start de realisatie', subjLater: 'Misschien later',
+        bodyGo: 'Goedendag,\n\nIk wil graag dat u van start gaat volgens uw voorstel.\n\nNuttige informatie (teksten, foto’s, openingstijden, kleuren…):\n\n',
+        bodyLater: 'Goedendag,\n\nBedankt voor het voorbeeld. Het is nu niet het juiste moment; u mag later opnieuw contact opnemen.\n' },
+  pt: { goSite: 'Sim, quero o meu site', goPost: 'Sim, avançar', later: 'Talvez mais tarde', subjGo: 'Sim – avançar com a realização', subjLater: 'Talvez mais tarde',
+        bodyGo: 'Olá,\n\nGostaria de avançar com a realização conforme a vossa proposta.\n\nInformações úteis (textos, fotos, horário, cores…):\n\n',
+        bodyLater: 'Olá,\n\nObrigado pela maquete. Não é o momento certo; podem voltar a contactar-me mais tarde.\n' },
+};
+
+export function proposalCta(mailbox: string, lang: string, need = 'website', withNo = false): Cta {
+  const p = P[lang] ?? P.en; const t = T[lang] ?? T.en;
+  const mailto = (subject: string, b: string) => `mailto:${mailbox}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(b)}`;
+  return { yes: { label: need === 'website' ? p.goSite : p.goPost, href: mailto(p.subjGo, p.bodyGo) }, later: { label: p.later, href: mailto(p.subjLater, p.bodyLater) },
+    ...(withNo ? { no: { label: t.no, href: mailto(t.subjNo, t.stopBody) } } : {}) };
+}
+
+/** A reply from the "start the work" button. */
+export function isGoReply(subject: string): boolean {
+  return /je lance la réalisation|go ahead with the work|start de realisatie|avançar com a realização/i.test(subject);
+}
+/** A reply from the "maybe later" button (or a short "not now" answer). */
+export function isLaterReply(subject: string, body = ''): boolean {
+  return /^\s*(re:\s*)?(peut-être plus tard|maybe later|misschien later|talvez mais tarde)\b/i.test(subject)
+    || (body.trim().length < 300 && /\b(plus tard|pas le bon moment|pas maintenant|not now|later on|maybe later|niet nu|mais tarde)\b/i.test(body) && !/\b(stop|pas intéress|not interested)\b/i.test(body));
+}

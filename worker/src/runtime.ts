@@ -12,7 +12,7 @@ import { followUp, pollInbox, sendOutbox } from './agents/comms.js';
 import { respondToLead } from './agents/negotiation.js';
 import { captureFeedback } from './agents/feedback.js';
 import { marketingReview } from './agents/marketing.js';
-import { prospectMockup } from './agents/mockup.js';
+import { prospectMockup, proposalReminder } from './agents/mockup.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -42,7 +42,7 @@ export const HANDLERS: Record<string, Handler> = {
   'analytics.snapshot': analyticsSnapshot,
   'strategy.review': strategyReview,
   'marketing.review': marketingReview,
-  'lead.mockup': prospectMockup,
+  'lead.mockup': prospectMockup, 'lead.proposal_reminder': proposalReminder,
   'system.health_check': healthCheck,
 };
 
@@ -82,6 +82,10 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   const followUps = await sql`select id, title, follow_ups_sent from public.leads where stage = 'contacted' and next_follow_up_at <= now()`;
   for (const l of followUps) await enqueue(sql, { type: 'lead.followup', key: `followup:${l.id}:${Number(l.follow_ups_sent) + 1}`, role: 'sales_agent', entityType: 'lead',
     entityId: String(l.id), input: { lead_id: l.id }, priority: 55, title: `Follow-up: ${String(l.title).slice(0, 70)}` });
+  // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
+  const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
+  for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
+    entityId: String(l.id), input: { lead_id: l.id }, priority: 56, title: `Proposal reminder: ${String(l.title).slice(0, 70)}`, timeoutSeconds: 240 });
   await enqueue(sql, { type: 'comms.poll_inbox', key: `comms.poll:${runId}`, role: 'mail_clerk', priority: 95, title: 'Check company mailbox', timeoutSeconds: 120 });
   await enqueue(sql, { type: 'comms.send', key: `comms.send:${runId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails', timeoutSeconds: 180 });
   return { recovered, expired, executed, sources, reminders: reminders.length, follow_ups: followUps.length };

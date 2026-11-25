@@ -24,14 +24,15 @@ export function renderText(body: string, id: Identity): string {
 }
 
 /** Reply buttons (mailto) shown in prospecting emails. */
-export interface Cta { yes: { label: string; href: string }; no: { label: string; href: string } }
+export interface Cta { yes: { label: string; href: string }; later?: { label: string; href: string }; no?: { label: string; href: string } }
 export interface Highlights { title: string; items: string[] }
 
-const ctaHtml = (c: Cta) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:4px 0 16px"><tr>
-<td style="background:#111827;border-radius:6px"><a href="${esc(c.yes.href)}" style="display:inline-block;padding:10px 16px;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px">${esc(c.yes.label)}</a></td>
-<td style="width:10px"></td>
-<td style="border:1px solid #e7e4dd;border-radius:6px"><a href="${esc(c.no.href)}" style="display:inline-block;padding:9px 14px;color:#6b6f78;text-decoration:none;font-size:14px">${esc(c.no.label)}</a></td>
-</tr></table>`;
+// Inline buttons (they wrap on phones): main action in black, "later" outlined, "not interested" discreet.
+const ctaHtml = (c: Cta) => `<p style="margin:8px 0 18px">`
+  + `<a href="${esc(c.yes.href)}" style="display:inline-block;margin:0 8px 8px 0;padding:11px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">${esc(c.yes.label)}</a>`
+  + (c.later ? `<a href="${esc(c.later.href)}" style="display:inline-block;margin:0 8px 8px 0;padding:10px 16px;border:1px solid #111827;color:#111827;text-decoration:none;border-radius:6px;font-size:14px">${esc(c.later.label)}</a>` : '')
+  + (c.no ? `<a href="${esc(c.no.href)}" style="display:inline-block;margin:0 0 8px 0;padding:10px 14px;border:1px solid #e0ddd6;color:#6b6f78;text-decoration:none;border-radius:6px;font-size:13px">${esc(c.no.label)}</a>` : '')
+  + `</p>`;
 
 /** The original email design (light header with the company name, body, grey signature) — the one whose first emails
  *  reached the inbox. Cold emails (first contact, follow-ups) carry no image: a small monogram replaces the logo. */
@@ -41,7 +42,7 @@ export function renderPersonal(body: string, id: Identity, cta?: Cta): string {
   const ps = cleanBody(body, id).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   const optIdx = ps.findIndex((p) => /\bSTOP\b/.test(p) && p.length < 220);
   const opt = optIdx >= 0 ? ps.splice(optIdx, 1)[0] : '';
-  const buttons = cta ? `<p style="margin:18px 0"><a href="${esc(cta.yes.href)}" style="display:inline-block;margin:0 6px 6px 0;padding:6px 12px;background:#111827;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:bold">${esc(cta.yes.label)}</a> <a href="${esc(cta.no.href)}" style="display:inline-block;margin:0 0 6px 0;padding:5px 11px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:5px;font-size:13px">${esc(cta.no.label)}</a></p>` : '';
+  const buttons = cta ? `<p style="margin:18px 0"><a href="${esc(cta.yes.href)}" style="display:inline-block;margin:0 6px 6px 0;padding:6px 12px;background:#111827;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:bold">${esc(cta.yes.label)}</a> ${cta.no ? `<a href="${esc(cta.no.href)}" style="display:inline-block;margin:0 0 6px 0;padding:5px 11px;border:1px solid #cccccc;color:#555555;text-decoration:none;border-radius:5px;font-size:13px">${esc(cta.no.label)}</a>` : ''}</p>` : '';
   return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#202124">${ps.map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}${buttons}<p>${esc(id.signature).replace(/\n/g, '<br>')}</p><p style="font-size:12px;color:#80868b">${esc(id.ai_disclosure)}${opt ? `<br>${esc(opt)}` : ''}</p></div>`;
 }
 
@@ -63,7 +64,7 @@ export function renderHtml(body: string, id: Identity, opts: { preheader?: strin
     : `<td style="width:34px;height:34px;background:#111827;border-radius:8px;color:#ffffff;font-weight:700;text-align:center;font-size:16px">${esc(id.company_name.charAt(0))}</td>`}
   <td style="padding-left:12px"><div style="font-weight:650;font-size:15px">${esc(id.company_name)}</div><div style="font-size:12px;color:#6b6f78">${esc(id.tagline)}</div></td>
   </tr></table></td></tr>
-<tr><td style="padding:26px 28px;font-size:14.5px;line-height:1.6">${paras}${opts.cta ? ctaHtml(opts.cta) : ''}${opts.blocks ?? ''}</td></tr>
+<tr><td style="padding:26px 28px;font-size:14.5px;line-height:1.6">${paras}${opts.blocks ?? ''}${opts.cta ? ctaHtml(opts.cta) : ''}</td></tr>
 <tr><td style="padding:18px 28px;border-top:1px solid #e7e4dd;font-size:12.5px;color:#6b6f78;line-height:1.5">
   ${esc(id.signature).replace(/\n/g, '<br>')}${id.website ? `<br><a href="${esc(id.website)}" style="color:#6b6f78">${esc(id.website)}</a>` : ''}
   <div style="margin-top:10px;color:#9a9da5">${esc(id.ai_disclosure)}</div></td></tr>

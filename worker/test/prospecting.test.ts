@@ -126,6 +126,40 @@ describe('continuous prospecting cycle', () => {
     expect(l.stage).toBe('proposal');
     expect((l.quote as { mockup_sent_at?: string }).mockup_sent_at).toBeTruthy();
   }, 120_000);
+
+  it('"maybe later" keeps the prospect, the reminder repeats the proposal with a "not interested" button, which is honoured', async () => {
+    const proposal = outbox[outbox.length - 1];
+    expect(proposal.html).toContain('Je veux la réalisation');
+    expect(proposal.html).toContain('Peut-être plus tard');
+    expect(proposal.html).not.toContain('Pas intéressé');
+    const to = String(proposal.to);
+    const sentId = `<sent-${outbox.length}@example.test>`;
+    inbox.push({ uid: 11, messageId: '<later-1@salon.example>', inReplyTo: sentId, references: [sentId], from: to, fromName: 'Salon', to: mail.address,
+      subject: 'Peut-être plus tard', text: 'Bonjour, merci pour la maquette. Ce n’est pas le bon moment pour moi, vous pouvez me recontacter plus tard.', date: new Date() });
+    const before = outbox.length;
+    await runWorker({ sql, workerId: 'w5', env, fetchFn: net.fn, mail, timeBudgetMs: 120_000 });
+    expect(outbox.length).toBe(before);   // no reply needed
+    const [l] = await sql`select l.id, l.stage, l.next_follow_up_at from public.leads l join public.contacts c on c.id = l.contact_id where c.email = ${to}`;
+    expect(l.stage).toBe('proposal');
+    expect(new Date(l.next_follow_up_at).getTime() - Date.now()).toBeGreaterThan(29 * 86_400_000);
+
+    await sql`update public.leads set next_follow_up_at = now() - interval '1 minute' where id = ${l.id}`;
+    await scheduleDueWork(sql, new Date(), 'reminder');
+    await runWorker({ sql, workerId: 'w6', env, fetchFn: net.fn, mail, timeBudgetMs: 120_000 });
+    const reminder = outbox.slice(before).find((m) => m.to === to);
+    expect(reminder).toBeDefined();
+    expect(reminder!.html).toContain('Je veux la réalisation');
+    expect(reminder!.html).toContain('Pas intéressé');
+    expect(reminder!.attachments!.some((x) => x.filename.endsWith('.pdf'))).toBe(true);
+
+    const rid = `<sent-${outbox.indexOf(reminder!) + 1}@example.test>`;
+    inbox.push({ uid: 12, messageId: '<no-1@salon.example>', inReplyTo: rid, references: [rid], from: to, fromName: 'Salon', to: mail.address,
+      subject: 'STOP', text: 'Merci de ne plus me contacter.', date: new Date() });
+    await runWorker({ sql, workerId: 'w7', env, fetchFn: net.fn, mail, timeBudgetMs: 120_000 });
+    const [after] = await sql`select l.stage, c.do_not_contact from public.leads l join public.contacts c on c.id = l.contact_id where c.email = ${to}`;
+    expect(after.stage).toBe('lost');
+    expect(after.do_not_contact).toBe(true);
+  }, 180_000);
   void HANDLERS;
 });
 
