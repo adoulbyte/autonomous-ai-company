@@ -87,6 +87,8 @@ describe('continuous prospecting cycle', () => {
     expect(kept).toBe(1);                                           // third business kept for the next day
     const [c] = await sql`select lawful_basis from public.contacts where email = 'contact@boulangerie-parc.example'`;
     expect(c.lawful_basis).toBe('legitimate_interest');
+    const [o] = await sql`select analysis from public.opportunities where buyer_contact = 'contact@boulangerie-parc.example'`;
+    expect((o.analysis as { country?: string }).country).toBe('FR');   // the country is kept (marketing stats, domain names)
     const [p] = await sql`select config from public.sources where key = 'osm_businesses'`;
     expect(Number((p.config as { cursor: number }).cursor)).toBe(1);   // next run explores the next city
   });

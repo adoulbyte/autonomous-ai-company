@@ -99,7 +99,7 @@ const prospectFromDirectory = async (ctx: Parameters<Handler>[0], key: string, s
           values (${key}, ${it.url}, ${sha256(it.text)}, ${it.title}, ${it.text}, ${tx.json(it.raw as never)})
           on conflict (url, content_hash) do update set fetched_at = now() returning id`;
       const need = String(it.raw.need ?? 'website');
-      const analysis = { prospect: true, need, language: it.raw.language ?? 'fr', category: it.raw.category, city: it.raw.city, website: it.raw.website ?? null,
+      const analysis = { prospect: true, need, language: it.raw.language ?? 'fr', country: it.raw.country ?? 'FR', category: it.raw.category, city: it.raw.city, website: it.raw.website ?? null,
         rationale: `${it.buyerName} (${it.raw.category}, ${it.raw.city}) publishes a professional email address. ${NEED_LABEL[need] ?? ''}` };
       const [opp] = await tx`insert into public.opportunities(source_key, external_id, fingerprint, title, description, url, buyer_name, buyer_contact,
             posted_at, last_verified_at, business_model, revenue_mechanism, skill_fit, risk, evidence_quality, analysis)
