@@ -58,7 +58,7 @@ test('approval decided in the UI is enforced in the database', async ({ page }) 
   await expect(page.getByText('UI test approval')).toBeVisible();
   await expect(page.getByText('Gated task is released')).toBeVisible();
   await shot(page, '04-approval-pending');
-  await page.getByRole('button', { name: 'Approve' }).first().click();
+  await page.getByRole('button', { name: 'Valider', exact: true }).first().click();
   await expect.poll(() => sql(`select status from public.approvals where id = '${approvalId}'`)).toBe('approved');
   expect(sql(`select status from public.tasks where id = '${taskId}'`)).toBe('pending');
   expect(sql(`select count(*) from public.audit_log where entity_type = 'approvals' and entity_id = '${approvalId}' and actor_type = 'owner'`)).not.toBe('0');

@@ -24,12 +24,13 @@ export function renderText(body: string, id: Identity): string {
 }
 
 /** Reply buttons (mailto) shown in prospecting emails. */
-export interface Cta { yes: { label: string; href: string }; later?: { label: string; href: string }; no?: { label: string; href: string } }
+export interface Cta { yes: { label: string; href: string }; alt?: { label: string; href: string }; later?: { label: string; href: string }; no?: { label: string; href: string } }
 export interface Highlights { title: string; items: string[] }
 
 // Inline buttons (they wrap on phones): main action in black, "later" outlined, "not interested" discreet.
 const ctaHtml = (c: Cta) => `<p style="margin:8px 0 18px">`
   + `<a href="${esc(c.yes.href)}" style="display:inline-block;margin:0 8px 8px 0;padding:11px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">${esc(c.yes.label)}</a>`
+  + (c.alt ? `<a href="${esc(c.alt.href)}" style="display:inline-block;margin:0 8px 8px 0;padding:11px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px">${esc(c.alt.label)}</a>` : '')
   + (c.later ? `<a href="${esc(c.later.href)}" style="display:inline-block;margin:0 8px 8px 0;padding:10px 16px;border:1px solid #111827;color:#111827;text-decoration:none;border-radius:6px;font-size:14px">${esc(c.later.label)}</a>` : '')
   + (c.no ? `<a href="${esc(c.no.href)}" style="display:inline-block;margin:0 0 8px 0;padding:10px 14px;border:1px solid #e0ddd6;color:#6b6f78;text-decoration:none;border-radius:6px;font-size:13px">${esc(c.no.label)}</a>` : '')
   + `</p>`;

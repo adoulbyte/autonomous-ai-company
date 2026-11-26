@@ -17,31 +17,37 @@ import { renderBrochurePdf } from '../email/brochure.js';
 import { screenshotHtml } from '../render/screenshot.js';
 import { editDesign, type Design } from '../render/edit.js';
 import { enqueue } from '../queue.js';
+import { getSetting } from '../db.js';
+import { suggestDomain } from '../hosting/pages.js';
 import { findPhotos, generatePhoto, tradeProfile } from '../render/photos.js';
 import { factsFromListing, PostContentSchema, renderPost, renderSite, SiteContentSchema, type PostContent, type SiteContent } from '../render/site.js';
 
 const ReviewSchema = z.object({ score: z.number().min(0).max(10), issues: z.array(z.string().max(300)).max(10) });
 
-const MAIL: Record<string, { subject: string; site: string; post: string; offer: (label: string, price: string, days: number) => string; free: (label: string, days: number) => string; next: string; brochure: string; preview: string }> = {
+const MAIL: Record<string, { subject: string; site: string; post: string; offer: (label: string, price: string, days: number) => string; free: (label: string, days: number) => string; online: (price: string, renewal: string, domain: string | null) => string; next: string; brochure: string; preview: string }> = {
   fr: { subject: 'Votre maquette', site: 'Comme promis, voici la maquette de votre site, préparée spécialement pour {name} (aperçu ci-dessous, sur ordinateur et sur téléphone).',
+        online: (p, r, d) => `Option : nous le mettons aussi en ligne pour vous, avec votre propre nom de domaine${d ? ` (par exemple www.${d}, disponible aujourd’hui)` : ''} : ${p} la première année, hébergement compris, puis ${r} par an. Vous recevez aussi les fichiers sources ; le nom de domaine est à votre nom.`,
         post: 'Comme promis, voici un exemple de visuel préparé spécialement pour {name} (aperçu ci-dessous).',
         offer: (l, p, d) => `Notre proposition : ${l} pour ${p}, prêt en ${d} jour${d > 1 ? 's' : ''}. Tout reste modifiable : textes, couleurs, photos.`,
         free: (l, d) => `Comme annoncé dans notre premier message, la réalisation (${l}) vous est offerte, prête en ${d} jour${d > 1 ? 's' : ''} ; nous vous demanderons simplement un avis honnête. Tout reste modifiable : textes, couleurs, photos. Cliquez ci-dessous pour lancer la réalisation, ou choisissez « Peut-être plus tard ».`,
         next: 'La maquette vous plaît ? Cliquez sur le bouton ci-dessous : nous finalisons le site avec vos textes et vos photos, vous le validez, puis nous vous envoyons la facture. Ce n’est pas le bon moment ? Choisissez « Peut-être plus tard », sans aucun engagement.',
         brochure: 'Vous trouverez notre plaquette en pièce jointe.', preview: 'Aperçu sur ordinateur et sur téléphone' },
   en: { subject: 'Your preview', site: 'As promised, here is the preview of your website, prepared especially for {name} (desktop and phone views below).',
+        online: (p, r, d) => `Option: we can also put it online for you, with your own domain name${d ? ` (for example www.${d}, available today)` : ''}: ${p} the first year, hosting included, then ${r} a year. You also receive the source files; the domain name is registered in your name.`,
         post: 'As promised, here is a sample visual prepared especially for {name} (preview below).',
         offer: (l, p, d) => `Our proposal: ${l} for ${p}, ready in ${d} day${d > 1 ? 's' : ''}. Everything can be adjusted: texts, colours, photos.`,
         free: (l, d) => `As announced in our first message, the work (${l}) is free of charge, ready in ${d} day${d > 1 ? 's' : ''}; we only ask for an honest review. Everything can be adjusted: texts, colours, photos. Click below to go ahead, or choose "Maybe later".`,
         next: 'Do you like it? Click the button below: we finish it with your texts and photos, you approve it, and only then do we send the invoice. Not the right time? Choose "Maybe later", with no obligation.',
         brochure: 'Please find our brochure attached.', preview: 'Desktop and phone preview' },
   nl: { subject: 'Uw voorbeeld', site: 'Zoals beloofd, hier is het voorbeeld van uw website, speciaal gemaakt voor {name} (weergave op computer en telefoon hieronder).',
+        online: (p, r, d) => `Optie: we zetten de website ook voor u online, met uw eigen domeinnaam${d ? ` (bijvoorbeeld www.${d}, vandaag beschikbaar)` : ''}: ${p} het eerste jaar, hosting inbegrepen, daarna ${r} per jaar. U ontvangt ook de bronbestanden; de domeinnaam staat op uw naam.`,
         post: 'Zoals beloofd, hier is een voorbeeldvisual speciaal gemaakt voor {name}.',
         offer: (l, p, d) => `Ons voorstel: ${l} voor ${p}, klaar in ${d} dag${d > 1 ? 'en' : ''}. Alles kan worden aangepast: teksten, kleuren, foto's.`,
         free: (l, d) => `Zoals aangekondigd in ons eerste bericht is het werk (${l}) gratis, klaar in ${d} dag${d > 1 ? 'en' : ''}; we vragen alleen een eerlijke beoordeling. Alles kan worden aangepast. Klik hieronder om te starten, of kies "Misschien later".`,
         next: 'Bevalt het u? Klik op de knop hieronder: we werken het af met uw teksten en foto’s, u keurt het goed en pas daarna sturen we de factuur. Niet het juiste moment? Kies "Misschien later", zonder verplichting.',
         brochure: 'Onze brochure vindt u in de bijlage.', preview: 'Weergave op computer en telefoon' },
   pt: { subject: 'A sua maquete', site: 'Como prometido, eis a maquete do seu site, preparada especialmente para {name} (pré-visualização em computador e telemóvel abaixo).',
+        online: (p, r, d) => `Opção: também o colocamos online por si, com o seu próprio nome de domínio${d ? ` (por exemplo www.${d}, disponível hoje)` : ''}: ${p} no primeiro ano, alojamento incluído, depois ${r} por ano. Recebe também os ficheiros fonte; o domínio fica em seu nome.`,
         post: 'Como prometido, eis um exemplo de visual preparado especialmente para {name}.',
         offer: (l, p, d) => `A nossa proposta: ${l} por ${p}, pronto em ${d} dia${d > 1 ? 's' : ''}. Tudo pode ser ajustado: textos, cores, fotografias.`,
         free: (l, d) => `Como anunciado na nossa primeira mensagem, o trabalho (${l}) é gratuito, pronto em ${d} dia${d > 1 ? 's' : ''}; pedimos apenas uma avaliação honesta. Tudo pode ser ajustado. Clique abaixo para avançar, ou escolha "Talvez mais tarde".`,
@@ -71,7 +77,14 @@ export const prospectMockup: Handler = async (ctx) => {
   const price = `${(item.price_minor / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency}`;
   const name = String(l.buyer_name ?? '');
   const greet = ({ fr: 'Bonjour,', en: 'Hello,', nl: 'Goedendag,', pt: 'Olá,' } as Record<string, string>)[lang] ?? 'Hello,';
-  const body = [greet, (need === 'website' ? t.site : t.post).replace('{name}', name), (free ? t.free(item.label[lang] ?? item.label.en ?? '', item.days) : t.offer(item.label[lang] ?? item.label.en ?? '', price, item.days)), ...(free ? [] : [t.next]), t.brochure].join('\n\n');
+  // Website + "online" option (published by us, with the client's own domain name, bought once they have paid).
+  const onlineItem = need === 'website' && !free ? cat.items.website_online : undefined;
+  const hosting = await getSetting<{ renewal_minor: number }>(ctx.sql, 'hosting.plan', { renewal_minor: 4900 });
+  const domain = onlineItem ? await suggestDomain(name, a.city, (l.analysis as { country?: string } | null)?.country ?? 'FR', ctx.fetchFn ?? fetch) : null;
+  const eur = (m: number) => `${(m / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency}`;
+  const body = [greet, (need === 'website' ? t.site : t.post).replace('{name}', name), (free ? t.free(item.label[lang] ?? item.label.en ?? '', item.days) : t.offer(item.label[lang] ?? item.label.en ?? '', price, item.days)),
+    ...(onlineItem ? [t.online(eur(onlineItem.price_minor), eur(hosting.renewal_minor), domain)] : []), ...(free ? [] : [t.next]), t.brochure].join('\n\n');
+  const online = onlineItem ? { site: price, online: eur(onlineItem.price_minor) } : undefined;
   const imgs = shots ? `<div style="margin:6px 0 18px"><div style="font-size:12px;color:#6b6f78;margin-bottom:8px">${t.preview}</div>
 <img src="cid:mockup-desktop" alt="" width="544" style="display:block;width:100%;max-width:544px;border:1px solid #e7e4dd;border-radius:8px;margin-bottom:12px">
 ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display:block;width:220px;border:1px solid #e7e4dd;border-radius:12px">' : ''}</div>` : '';
@@ -87,7 +100,7 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     const [c] = await tx`select subject from public.conversations where id = ${conv.id}`;
     const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
         values (${conv.id}, 'outbound', 'draft', ${l.contact_email}, ${'Re: ' + String(c?.subject ?? t.subject)}, ${body},
-          ${renderHtml(body, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need) })}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'mockup:' + leadId}) returning id`;
+          ${renderHtml(body, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need, false, online) })}, ${tx.json(attachments as never)}, ${ctx.task.id}, ${'mockup:' + leadId}) returning id`;
     const approvalId = await requestApproval(tx, {
       actionType: 'message.send', title: `Maquette + devis : ${String(l.title).slice(0, 80)}`, requestedBy: 'specialist_worker',
       reason: 'The prospect asked to see the free preview; it passed an independent review.', riskLevel: 'low',
@@ -97,7 +110,7 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${out.id}`;
     await autoApproveIfPolicy(tx, approvalId);
     await tx`update public.leads set value_minor = ${free ? 0 : item.price_minor}, currency = ${cat.currency}, next_follow_up_at = now() + interval '5 days',
-        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, mockup_design: design, photos: photos.length, mockup_photos: photos.filter((x) => !x.url.startsWith('data:')), need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
+        quote = coalesce(quote, '{}'::jsonb) || ${tx.json({ mockup_sent_at: new Date().toISOString(), mockup_html: html, mockup_content: content, mockup_design: design, domain_suggestion: domain, online_offered: !!onlineItem, photos: photos.length, mockup_photos: photos.filter((x) => !x.url.startsWith('data:')), need, reminders: 0, catalog: need === 'website' ? 'website' : 'social_pack', price_minor: free ? 0 : item.price_minor, free } as never)}
         where id = ${leadId}`;
     if (['contacted', 'engaged'].includes(String(l.stage))) await tx`update public.leads set stage = 'proposal' where id = ${leadId}`;
     return { message_id: out.id, screenshots: !!shots, model };
@@ -206,7 +219,12 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     ...(shots?.mobile ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
     { filename: `${id.company_name.replace(/[^\w-]+/g, '-')}-plaquette.pdf`, content_b64: brochure.toString('base64'), contentType: 'application/pdf' },
   ];
-  const html = renderHtml(body, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need, true) });
+  const onl = (l.quote as { online_offered?: boolean; domain_suggestion?: string | null } | null) ?? {};
+  const onlineItem = onl.online_offered && !q.free ? cat.items.website_online : undefined;
+  const hosting = await getSetting<{ renewal_minor: number }>(ctx.sql, 'hosting.plan', { renewal_minor: 4900 });
+  const eur = (m: number) => `${(m / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency}`;
+  const fullBody = onlineItem ? body.replace(r.again, `${t.online(eur(onlineItem.price_minor), eur(hosting.renewal_minor), onl.domain_suggestion ?? null)}\n\n${r.again}`) : body;
+  const html = renderHtml(fullBody, id, { preheader: t.preview, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, need, true, onlineItem ? { site: price, online: eur(onlineItem.price_minor) } : undefined) });
   return finish(ctx, async (tx) => {
     const [conv] = await tx`select c.id, c.subject from public.conversations c where c.lead_id = ${leadId} order by c.updated_at desc limit 1`;
     if (!conv) return { skipped: 'no conversation' };
@@ -292,7 +310,9 @@ ${shots.mobile ? '<img src="cid:mockup-mobile" alt="" width="220" style="display
     ...(shots ? [{ filename: 'apercu-ordinateur.jpg', content_b64: shots.desktop.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-desktop' }] : []),
     ...(shots?.mobile ? [{ filename: 'apercu-telephone.jpg', content_b64: shots.mobile.toString('base64'), contentType: 'image/jpeg', cid: 'mockup-mobile' }] : []),
   ];
-  const html = renderHtml(body, id, { preheader: t.subject, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, r.design.kind === 'site' ? 'website' : 'marketing') });
+  const cat = await getCatalog(ctx.sql); const eur = (m: number) => `${(m / 100).toFixed(0)} ${cat.currency === 'EUR' ? '€' : cat.currency}`;
+  const onlineOpt = q.online_offered && cat.items.website_online && cat.items.website ? { site: eur(Number(q.price_minor ?? cat.items.website.price_minor)), online: eur(cat.items.website_online.price_minor) } : undefined;
+  const html = renderHtml(body, id, { preheader: t.subject, blocks: imgs, cta: proposalCta(ctx.mail?.address ?? '', lang, r.design.kind === 'site' ? 'website' : 'marketing', false, onlineOpt) });
   return finish(ctx, async (tx) => {
     const [out] = await tx`insert into public.messages(conversation_id, direction, status, to_addr, subject, body, html, attachments, generated_by_task, idempotency_key)
         values (${msg.conversation_id}, 'outbound', 'draft', ${l.contact_email}, ${'Re: ' + String(msg.subject ?? t.subject).replace(/^(re:\s*)+/i, '')}, ${body}, ${html},

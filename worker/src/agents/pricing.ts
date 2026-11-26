@@ -40,7 +40,7 @@ export function decidePrice(i: { statedBudgetMinor: number | null; aiTypicalMino
 
 export interface CatalogItem { label: Record<string, string>; price_minor: number; days: number }
 export interface Catalog { currency: string; items: Record<string, CatalogItem> }
-export async function getCatalog(sql: Parameters<Handler>[0]['sql']): Promise<Catalog> {
+export async function getCatalog(sql: Parameters<Handler>[0]['sql'] | import('../db.js').Tx): Promise<Catalog> {
   return getSetting<Catalog>(sql, 'pricing.catalog', { currency: 'EUR', items: { website: { label: { fr: 'Site vitrine une page', en: 'One-page website' }, price_minor: 4900, days: 3 },
     social_pack: { label: { fr: 'Pack de 3 visuels', en: 'Pack of 3 visuals' }, price_minor: 4500, days: 2 } } });
 }

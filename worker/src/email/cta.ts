@@ -77,17 +77,33 @@ const P: Record<string, { goSite: string; goPost: string; later: string; subjGo:
         bodyLater: 'Olá,\n\nObrigado pela maquete. Não é o momento certo; podem voltar a contactar-me mais tarde.\n' },
 };
 
-export function proposalCta(mailbox: string, lang: string, need = 'website', withNo = false): Cta {
-  const p = P[lang] ?? P.en; const t = T[lang] ?? T.en;
+const O: Record<string, { site: (p: string) => string; online: (p: string) => string; subj: string; body: string }> = {
+  fr: { site: (p) => `Je veux mon site – ${p}`, online: (p) => `En ligne avec mon nom de domaine – ${p}`, subj: 'Oui – site en ligne avec nom de domaine',
+        body: 'Bonjour,\n\nJe souhaite lancer la réalisation de mon site, mis en ligne avec mon propre nom de domaine, selon votre proposition.\n\nInformations utiles (textes, photos, horaires, couleurs, nom de domaine souhaité…) :\n\n' },
+  en: { site: (p) => `I want my website – ${p}`, online: (p) => `Online with my own domain – ${p}`, subj: 'Yes – website online with domain name',
+        body: 'Hello,\n\nI would like you to build my website and put it online with my own domain name, as proposed.\n\nUseful information (texts, photos, opening hours, colours, preferred domain name…):\n\n' },
+  nl: { site: (p) => `Ik wil mijn website – ${p}`, online: (p) => `Online met mijn eigen domein – ${p}`, subj: 'Ja – website online met domeinnaam',
+        body: 'Goedendag,\n\nIk wil graag mijn website, online gezet met mijn eigen domeinnaam, volgens uw voorstel.\n\nNuttige informatie (teksten, foto’s, openingstijden, kleuren, gewenste domeinnaam…):\n\n' },
+  pt: { site: (p) => `Quero o meu site – ${p}`, online: (p) => `Online com o meu domínio – ${p}`, subj: 'Sim – site online com nome de domínio',
+        body: 'Olá,\n\nGostaria de avançar com o meu site, publicado online com o meu próprio nome de domínio, conforme a proposta.\n\nInformações úteis (textos, fotos, horário, cores, domínio pretendido…):\n\n' },
+};
+
+/** With `online` (prices of both formulas), two order buttons: the website, or the website online with its own domain name. */
+export function proposalCta(mailbox: string, lang: string, need = 'website', withNo = false, online?: { site: string; online: string }): Cta {
+  const p = P[lang] ?? P.en; const t = T[lang] ?? T.en; const o = O[lang] ?? O.en;
   const mailto = (subject: string, b: string) => `mailto:${mailbox}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(b)}`;
-  return { yes: { label: need === 'website' ? p.goSite : p.goPost, href: mailto(p.subjGo, p.bodyGo) }, later: { label: p.later, href: mailto(p.subjLater, p.bodyLater) },
+  return { yes: { label: online ? o.site(online.site) : need === 'website' ? p.goSite : p.goPost, href: mailto(p.subjGo, p.bodyGo) },
+    ...(online ? { alt: { label: o.online(online.online), href: mailto(o.subj, o.body) } } : {}),
+    later: { label: p.later, href: mailto(p.subjLater, p.bodyLater) },
     ...(withNo ? { no: { label: t.no, href: mailto(t.subjNo, t.stopBody) } } : {}) };
 }
 
 /** A reply from the "start the work" button. */
 export function isGoReply(subject: string): boolean {
-  return /je lance la réalisation|go ahead with the work|start de realisatie|avançar com a realização/i.test(subject);
+  return /je lance la réalisation|go ahead with the work|start de realisatie|avançar com a realização/i.test(subject) || isGoOnline(subject);
 }
+/** A reply from the "online with my own domain name" button. */
+export const isGoOnline = (subject: string) => /site en ligne avec nom de domaine|website online with domain name|website online met domeinnaam|site online com nome de domínio/i.test(subject);
 /** A reply from the "maybe later" button (or a short "not now" answer). */
 export function isLaterReply(subject: string, body = ''): boolean {
   return /^\s*(re:\s*)?(peut-être plus tard|maybe later|misschien later|talvez mais tarde)\b/i.test(subject)

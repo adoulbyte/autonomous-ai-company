@@ -15,6 +15,7 @@ import { marketingReview } from './agents/marketing.js';
 import { prospectMockup, proposalReminder, reviseMockup } from './agents/mockup.js';
 import { getPlans, offerSubscription, subscriptionCycle } from './agents/subscriptions.js';
 import { reviseCreatives } from './agents/revise.js';
+import { connectHostingDomain, publishHosting, scheduleHostingRenewals } from './agents/hosting.js';
 import { gmailTransport, type MailTransport } from './email/transport.js';
 import { analyticsSnapshot, healthCheck, strategyReview } from './agents/intelligence.js';
 import { scrubSecrets } from './sanitize.js';
@@ -45,7 +46,7 @@ export const HANDLERS: Record<string, Handler> = {
   'strategy.review': strategyReview,
   'marketing.review': marketingReview,
   'lead.mockup': prospectMockup, 'lead.proposal_reminder': proposalReminder, 'lead.revise_mockup': reviseMockup,
-  'subscription.offer': offerSubscription, 'subscription.cycle': subscriptionCycle, 'creative.revise': reviseCreatives,
+  'subscription.offer': offerSubscription, 'subscription.cycle': subscriptionCycle, 'creative.revise': reviseCreatives, 'hosting.publish': publishHosting, 'hosting.connect_domain': connectHostingDomain,
   'system.health_check': healthCheck,
 };
 
@@ -119,6 +120,8 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   const months = await sql`select id, cycles from public.subscriptions where status = 'active' and next_cycle_at <= now()`;
   for (const d of months) await enqueue(sql, { type: 'subscription.cycle', key: `sub-cycle:${d.id}:${Number(d.cycles) + 1}`, role: 'project_manager', entityType: 'subscription', entityId: String(d.id),
     input: { subscription_id: d.id }, priority: 60, title: `Monthly subscription: month ${Number(d.cycles) + 1}`, timeoutSeconds: 120 });
+  // Yearly renewal of the "website online" option: the owner is reminded a month before.
+  await scheduleHostingRenewals(sql);
   // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
   const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
   for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',

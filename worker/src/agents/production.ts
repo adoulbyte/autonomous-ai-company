@@ -409,6 +409,11 @@ export const deliverProject: Handler = async (ctx) => {
     await tx`update public.messages set status = 'awaiting_approval', approval_id = ${approvalId} where id = ${msg.id}`;
     for (const d of dels) await tx`update public.deliverables set status = 'delivered' where id = ${d.id}`;
     await tx`update public.projects set status = 'delivered', delivered_at = now() where id = ${projectId}`;
+    // "Website online" option: publish (or republish after a change) the delivered website.
+    const [lq] = p.lead_id ? await tx`select quote from public.leads where id = ${p.lead_id}` : [];
+    if ((lq?.quote as { online?: boolean } | null)?.online && dels.some((d) => d.format === 'html'))
+      await enqueue(tx, { type: 'hosting.publish', key: `publish:${projectId}:${ctx.task.id}`, role: 'project_manager', entityType: 'project', entityId: projectId,
+        input: { project_id: projectId }, priority: 72, title: `Publish website: ${String(p.name).slice(0, 70)}`, timeoutSeconds: 300 });
     const auto = await autoApproveIfPolicy(tx, approvalId);
     return { delivered: dels.length, message_id: msg.id, auto_approved: auto };
   });

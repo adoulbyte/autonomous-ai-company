@@ -12,7 +12,7 @@ import { runWorker, scheduleDueWork } from '../src/runtime.js';
 import type { IncomingMail, MailTransport, OutgoingMail } from '../src/email/transport.js';
 
 let db: Awaited<ReturnType<typeof freshDb>>; let sql: Sql;
-const env = { GITHUB_TOKEN: 'test-token' } as NodeJS.ProcessEnv;
+const env = { GITHUB_TOKEN: 'test-token', HOSTING_DRY_RUN: '1' } as NodeJS.ProcessEnv;
 const outbox: OutgoingMail[] = []; const inbox: IncomingMail[] = []; let uid = 0;
 const mail: MailTransport = {
   address: 'studio@example.test',
@@ -104,7 +104,10 @@ describe('full process, from the first email to the delivery', () => {
     await run('s-2');
     const proposal = outbox.filter((m) => m.to === CLIENT).at(-1)!;
     expect(proposal.text).toMatch(/49 €/);
-    expect(proposal.html).toContain('Je veux la réalisation');
+    expect(proposal.html).toContain('Je veux mon site – 49 €');
+    expect(proposal.html).toContain('En ligne avec mon nom de domaine – 89 €');
+    expect(proposal.text).toMatch(/www\.salon-coiffure-belle\.fr, disponible aujourd’hui/);
+    expect(proposal.text).toMatch(/49 € par an/);
     expect(proposal.html).toContain('Peut-être plus tard');
     expect(proposal.attachments!.some((a) => a.filename.endsWith('.pdf'))).toBe(true);
     const [l] = await sql`select stage, next_follow_up_at from public.leads`;
@@ -119,7 +122,7 @@ describe('full process, from the first email to the delivery', () => {
     const revised = outbox.filter((m) => m.to === CLIENT).at(-1)!;
     expect(revised.text).toMatch(/Ce que nous avons modifié/);
     expect(revised.text).toMatch(/bleu marine/);
-    expect(revised.html).toContain('Je veux la réalisation');
+    expect(revised.html).toContain('En ligne avec mon nom de domaine');
     const [after] = await sql`select quote, stage from public.leads`;
     const a = (after.quote as { mockup_design: { content: Record<string, unknown>; style: Record<string, string>; photos: unknown[] } }).mockup_design;
     const b = (before.quote as { mockup_design: { content: Record<string, unknown>; photos: unknown[] } }).mockup_design;
@@ -137,13 +140,13 @@ describe('full process, from the first email to the delivery', () => {
   }, 120_000);
 
   it('"build my website" → order closed, reminders stopped, final site built from the approved mockup, double QA', async () => {
-    clientReplies('Oui – je lance la réalisation', 'Bonjour,\n\nJe souhaite lancer la réalisation selon votre proposition.\n\nInformations utiles : notre téléphone est le 04 72 00 00 00.');
+    clientReplies('Oui – site en ligne avec nom de domaine', 'Bonjour,\n\nJe souhaite lancer la réalisation de mon site, mis en ligne avec mon propre nom de domaine, selon votre proposition.\n\nInformations utiles : notre téléphone est le 04 72 00 00 00.');
     await run('s-3');
     await run('s-4');
     expect(goHintSeen).toBe(true);
     const [l] = await sql`select stage, agreed_price_minor, next_follow_up_at from public.leads`;
     expect(l.stage).toBe('won');
-    expect(Number(l.agreed_price_minor)).toBe(4900);
+    expect(Number(l.agreed_price_minor)).toBe(8900);
     expect(l.next_follow_up_at).toBeNull();
     const [p] = await sql`select status, budget_minor from public.projects`;
     expect(p.status).toBe('ready_for_delivery');
@@ -167,12 +170,26 @@ describe('full process, from the first email to the delivery', () => {
     const invoice = outbox.find((m) => m.to === CLIENT && m.attachments?.some((a) => /^INV-.*\.pdf$/.test(a.filename)));
     expect(invoice).toBeDefined();
     const [inv] = await sql`select * from public.invoices`;
-    expect(Number(inv.amount_minor)).toBe(4900);
+    expect(Number(inv.amount_minor)).toBe(8900);
     await asOwner(sql, (tx) => tx`select * from public.owner_record_payment(${inv.id}, ${inv.amount_minor}, ${inv.currency}, 'bank_transfer', 'REF-1', true, 'statement_line', 'Relevé ligne 1', null, null)`);
     await run('s-6');
-    const delivery = outbox.filter((m) => m.to === CLIENT).at(-1)!;
+    const delivery = outbox.filter((m) => m.to === CLIENT && m.subject.startsWith('Livraison')).at(-1)!;
     expect(delivery.attachments!.some((a) => Buffer.from(a.content as Buffer).toString().includes('Salon Coiffure Belle'))).toBe(true);
     expect((await sql`select status from public.projects`)[0].status).toBe('delivered');
+    // "Online" option: the website is published, the client gets its address, the owner is asked to buy the domain.
+    await run('s-6b');
+    const [h] = await sql`select * from public.hosted_sites`;
+    expect(h.url).toBe('https://salon-coiffure-belle.pages.dev');
+    expect(h.domain).toBe('salon-coiffure-belle.fr');
+    expect(outbox.some((m) => m.to === CLIENT && m.subject === 'Votre site est en ligne' && m.text.includes('https://salon-coiffure-belle.pages.dev'))).toBe(true);
+    const [buy] = await sql`select id, status from public.approvals where action_type = 'domain.purchase'`;
+    expect(buy.status).toBe('pending');
+    await asOwner(sql, (tx) => tx`select public.decide_approval(${buy.id}, true, 'acheté chez OVH')`);
+    await run('s-6c');
+    const [h2] = await sql`select domain_status, url from public.hosted_sites`;
+    expect(h2.domain_status).toBe('connected');
+    expect(h2.url).toBe('https://www.salon-coiffure-belle.fr');
+    expect(outbox.some((m) => m.to === CLIENT && m.subject === 'Votre nom de domaine est actif')).toBe(true);
   }, 120_000);
 });
 

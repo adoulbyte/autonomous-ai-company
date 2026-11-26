@@ -69,7 +69,8 @@ ${catalogMenu(catalog, (l.analysis as { language?: string }).language ?? 'fr')}
 You handle the commercial conversation for our company. Read the thread and the client's latest message, then return JSON
 {intent: accept|negotiate|question|decline|other, agreed_price_usd: number|null, scope_summary: string|null, reply: string, asked_if_ai: boolean}.
 - intent=accept ONLY if the client explicitly agrees in writing.
-${ctx.task.input.go_button ? `- The client clicked the button "start the work" under our proposal (mockup + offer): this IS a written order of the proposed item at the listed price.
+${ctx.task.input.go_online ? `- The client chose the formula "website online with their own domain name" (menu item website_online, ${(quote / 100).toFixed(0)} ${cur}): the website, published by us, with a domain name in their name, hosting included the first year. scope_summary must say so.
+` : ''}${ctx.task.input.go_button ? `- The client clicked the button "start the work" under our proposal (mockup + offer): this IS a written order of the proposed item at the listed price.
   Use intent=accept (unless their message clearly says otherwise), scope_summary = the proposed item, and ask in the reply for what we need (texts, photos, logo, opening hours).
 ` : ''}${terms}
 - scope_summary: when accepting or clarifying, a numbered list of exactly what will be delivered (verifiable items), derived from the request and thread.
@@ -87,6 +88,8 @@ ${untrusted('thread', thread.map((t) => `[${t.direction}] ${String(t.body).slice
   let agreed = pilot ? 0 : d.agreed_price_usd != null ? Math.round(d.agreed_price_usd * 100) : quote;
   // Menu orders: the total must be made of listed prices (between the cheapest item and the whole menu).
   if (catalog && (agreed < Math.min(...menuPrices) || agreed > menuPrices.reduce((a, b) => a + b, 0))) agreed = quote;
+  // An order made with a button is an order of the proposed formula at its listed price — never another amount.
+  if (ctx.task.input.go_button && d.intent === 'accept' && quote > 0) agreed = quote;
   let reply = d.reply;
   if (intent === 'accept' && agreed < floor) {
     intent = 'negotiate';
