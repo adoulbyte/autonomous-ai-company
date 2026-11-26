@@ -26,3 +26,10 @@ jobs:
           DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - name: Website hosting permission (Cloudflare Pages)
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "pages: no Cloudflare token"; exit 0; fi
+          if npx --yes wrangler@4 pages project list >/dev/null 2>&1; then echo "pages: ok (websites can be published)"; else echo "pages: NO PERMISSION — the token needs 'Cloudflare Pages: Edit'"; fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
