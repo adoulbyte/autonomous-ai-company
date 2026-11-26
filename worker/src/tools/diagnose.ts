@@ -54,6 +54,9 @@ try {
       (select count(*)::int from public.subscriptions where status = 'active') active_subscriptions`.catch((e) => String(e.message)));
   show('replies by intent (counts only)', await sql`select coalesce(m.classification->>'intent','?') intent, coalesce(m.classification->>'model','?') via, count(*)::int n
       from public.messages m join public.conversations c on c.id = m.conversation_id where m.direction = 'inbound' and c.lead_id is not null and m.classification->>'automated' is null group by 1,2 order by 3 desc`.catch((e) => String(e.message)));
+  show('bounces by source and country (counts only)', await sql`select o.source_key, coalesce(o.analysis->>'country','?') country, o.external_id like 'wikidata:%' as via_wikidata,
+      count(*)::int contacted, count(*) filter (where l.lost_reason = 'email bounced')::int bounced
+      from public.leads l join public.opportunities o on o.id = l.opportunity_id where l.stage <> 'qualified' group by 1,2,3 order by 4 desc`.catch((e) => String(e.message)));
   show('mailbox', await sql`select last_poll_at, last_error is not null as has_error from public.mailbox_state`);
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
 finally { await sql.end({ timeout: 5 }); }
