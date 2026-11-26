@@ -38,6 +38,22 @@ try {
   show('first emails sent today vs daily cap', await sql`select (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'outreach:%' and sent_at >= date_trunc('day', now())) sent_today,
       (select count(*)::int from public.messages where direction = 'outbound' and status = 'approved' and idempotency_key like 'outreach:%') approved_waiting,
       (select value from public.settings where key = 'prospecting.policy') policy`.catch((e) => String(e.message)));
+  show('funnel (counts only)', await sql`select
+      (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'outreach:%') first_emails_total,
+      (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'outreach:%' and sent_at >= date_trunc('day', now())) first_emails_today,
+      (select count(*)::int from public.messages where direction = 'outbound' and status = 'sent' and idempotency_key like 'followup:%') followups_total,
+      (select count(*)::int from public.leads where lost_reason = 'email bounced') bounced,
+      (select count(*)::int from public.leads where lost_reason = 'unsubscribed') unsubscribed,
+      (select count(*)::int from public.messages m join public.conversations c on c.id = m.conversation_id where m.direction = 'inbound' and c.lead_id is not null and m.classification is not null and m.classification->>'automated' is null) human_replies,
+      (select count(*)::int from public.messages where direction = 'inbound' and classification->>'automated' = 'autoreply') auto_replies,
+      (select count(*)::int from public.leads where quote ? 'mockup_sent_at') mockups_sent,
+      (select count(*)::int from public.messages where direction = 'inbound' and classification->>'model' like 'rule:%') button_clicks,
+      (select count(*)::int from public.leads where stage = 'won') orders,
+      (select count(*)::int from public.invoices where status = 'paid') paid_invoices,
+      (select count(*)::int from public.hosted_sites) sites_online,
+      (select count(*)::int from public.subscriptions where status = 'active') active_subscriptions`.catch((e) => String(e.message)));
+  show('replies by intent (counts only)', await sql`select coalesce(m.classification->>'intent','?') intent, coalesce(m.classification->>'model','?') via, count(*)::int n
+      from public.messages m join public.conversations c on c.id = m.conversation_id where m.direction = 'inbound' and c.lead_id is not null and m.classification->>'automated' is null group by 1,2 order by 3 desc`.catch((e) => String(e.message)));
   show('mailbox', await sql`select last_poll_at, last_error is not null as has_error from public.mailbox_state`);
 } catch (e) { console.error('diagnose failed:', (e as Error).message); process.exitCode = 1; }
 finally { await sql.end({ timeout: 5 }); }
