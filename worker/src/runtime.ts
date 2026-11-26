@@ -61,6 +61,9 @@ export interface RuntimeOptions {
 
 /** Deterministic scheduler: enqueue due work idempotently (safe to run concurrently / repeatedly). */
 export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String(now.getTime())): Promise<Record<string, number>> {
+  // One task that cannot be scheduled (e.g. a guard limit) must never stop the rest of the cycle.
+  let scheduleErrors = 0;
+  const safeEnqueue = (db: Sql, a: Parameters<typeof enqueue>[1]) => enqueue(db, a).catch((e: Error) => { scheduleErrors++; console.error(`could not schedule ${a.type}: ${e.message.slice(0, 160)}`); return ''; });
   const recovered = Number((await sql`select public.recover_expired_leases() as n`)[0].n);
   const expired = Number((await sql`select public.expire_approvals() as n`)[0].n);
   const executed = Number((await sql`select public.execute_approved_actions() as n`)[0].n);
@@ -68,23 +71,23 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
   const due = await sql`select key, name, interval_minutes from public.sources where enabled and kind in ('api','rss','directory') and next_run_at <= ${now}`;
   for (const s of due) {
     const slot = Math.floor(now.getTime() / (Number(s.interval_minutes) * 60_000));
-    await enqueue(sql, { type: 'discovery.run_source', key: `discovery:${s.key}:${slot}`, role: 'opportunity_scout', entityType: 'source',
+    await safeEnqueue(sql, { type: 'discovery.run_source', key: `discovery:${s.key}:${slot}`, role: 'opportunity_scout', entityType: 'source',
       entityId: s.key as string, input: { source_key: s.key }, priority: 70, title: `Discover: ${s.name}`, timeoutSeconds: 260 });
     await sql`update public.sources set next_run_at = ${new Date(now.getTime() + Number(s.interval_minutes) * 60_000)} where key = ${s.key}`;
     sources++;
   }
   const day = now.toISOString().slice(0, 10);
   if (now.getUTCHours() < 2) await sql`select public.apply_retention()`; // once per night (pg_cron also runs it when available)
-  await enqueue(sql, { type: 'analytics.snapshot', key: `analytics:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'business_intelligence', priority: 20, title: 'Metrics snapshot' });
-  await enqueue(sql, { type: 'system.health_check', key: `health:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'orchestrator', priority: 25, title: 'System health check' });
+  await safeEnqueue(sql, { type: 'analytics.snapshot', key: `analytics:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'business_intelligence', priority: 20, title: 'Metrics snapshot' });
+  await safeEnqueue(sql, { type: 'system.health_check', key: `health:${day}:${Math.floor(now.getUTCHours() / 6)}`, role: 'orchestrator', priority: 25, title: 'System health check' });
   const week = Math.floor(now.getTime() / (7 * 86_400_000));
-  await enqueue(sql, { type: 'marketing.review', key: `marketing:v2:${day}`, role: 'marketing_strategist', priority: 15, title: 'Daily marketing review', timeoutSeconds: 240 });
-  await enqueue(sql, { type: 'strategy.review', key: `strategy:${week}`, role: 'executive_strategist', priority: 10, title: 'Weekly strategy review', timeoutSeconds: 300 });
+  await safeEnqueue(sql, { type: 'marketing.review', key: `marketing:v2:${day}`, role: 'marketing_strategist', priority: 15, title: 'Daily marketing review', timeoutSeconds: 240 });
+  await safeEnqueue(sql, { type: 'strategy.review', key: `strategy:${week}`, role: 'executive_strategist', priority: 10, title: 'Weekly strategy review', timeoutSeconds: 300 });
   // CRM reminders and follow-ups surface as alerts (once).
   const reminders = await sql`update public.reminders set notified_at = now() where done_at is null and notified_at is null and due_at <= now() returning id, title, entity_type, entity_id`;
   for (const r of reminders) await logEvent(sql, String(r.entity_type), String(r.entity_id), 'reminder_due', `Reminder due: ${r.title}`, {}, 'warning');
   const followUps = await sql`select id, title, follow_ups_sent from public.leads where stage = 'contacted' and next_follow_up_at <= now()`;
-  for (const l of followUps) await enqueue(sql, { type: 'lead.followup', key: `followup:${l.id}:${Number(l.follow_ups_sent) + 1}`, role: 'sales_agent', entityType: 'lead',
+  for (const l of followUps) await safeEnqueue(sql, { type: 'lead.followup', key: `followup:${l.id}:${Number(l.follow_ups_sent) + 1}`, role: 'sales_agent', entityType: 'lead',
     entityId: String(l.id), input: { lead_id: l.id }, priority: 55, title: `Follow-up: ${String(l.title).slice(0, 70)}` });
   // A first email whose draft failed the quality review gets a completely fresh attempt the next day (twice); after that the lead is set aside.
   const stuck = await sql`select l.id, l.title, count(t.id)::int as dead from public.leads l join public.tasks t on t.entity_id::text = l.id::text and t.type = 'lead.draft_outreach'
@@ -92,7 +95,7 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
       group by l.id, l.title having bool_and(t.status = 'dead') and max(t.created_at) < now() - interval '20 hours'`;
   for (const l of stuck) {
     if (Number(l.dead) >= 3) await sql`update public.leads set stage = 'disqualified', lost_reason = 'first email draft failed review 3 times' where id = ${l.id} and stage = 'qualified'`;
-    else await enqueue(sql, { type: 'lead.draft_outreach', key: `outreach:${l.id}:retry${l.dead}`, role: 'sales_agent', entityType: 'lead', entityId: String(l.id),
+    else await safeEnqueue(sql, { type: 'lead.draft_outreach', key: `outreach:${l.id}:retry${l.dead}`, role: 'sales_agent', entityType: 'lead', entityId: String(l.id),
       input: { lead_id: l.id }, priority: 58, title: `Draft outreach (new attempt): ${String(l.title).slice(0, 70)}`, timeoutSeconds: 200 });
   }
   // A prospect who said yes must always get an answer: a failed mockup is tried again once, then the sales agent replies personally.
@@ -101,9 +104,9 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
       where l.stage in ('contacted','engaged') and coalesce(l.quote->>'mockup_sent_at', '') = ''
       group by l.id, l.title having bool_and(t.status = 'dead') and max(t.created_at) < now() - interval '6 hours'`;
   for (const l of noMockup) {
-    if (Number(l.dead) < 2) await enqueue(sql, { type: 'lead.mockup', key: `mockup:${l.id}:retry${l.dead}`, role: 'specialist_worker', entityType: 'lead', entityId: String(l.id),
+    if (Number(l.dead) < 2) await safeEnqueue(sql, { type: 'lead.mockup', key: `mockup:${l.id}:retry${l.dead}`, role: 'specialist_worker', entityType: 'lead', entityId: String(l.id),
       input: { lead_id: l.id, message_id: l.message_id }, priority: 83, title: `Free preview (new attempt): ${String(l.title).slice(0, 70)}`, timeoutSeconds: 420 });
-    else if (l.message_id) await enqueue(sql, { type: 'lead.respond', key: `respond:${l.message_id}:after-mockup`, role: 'negotiation_agent', entityType: 'lead', entityId: String(l.id),
+    else if (l.message_id) await safeEnqueue(sql, { type: 'lead.respond', key: `respond:${l.message_id}:after-mockup`, role: 'negotiation_agent', entityType: 'lead', entityId: String(l.id),
       input: { lead_id: l.id, message_id: l.message_id }, priority: 82, title: `Respond to client: ${String(l.title).slice(0, 70)}`, timeoutSeconds: 220 });
   }
   // Recurring revenue: a few days after a delivery, the monthly pack is offered (once); active subscriptions start a new month when due.
@@ -112,23 +115,23 @@ export async function scheduleDueWork(sql: Sql, now = new Date(), runId = String
       where p.status in ('delivered','accepted','closed') and p.subscription_id is null and o.analysis->>'prospect' = 'true'
         and coalesce(l.quote->>'subscription_offered_at', '') = '' and not exists (select 1 from public.subscriptions s where s.lead_id = p.lead_id)
       group by p.lead_id, l.title having max(p.delivered_at) < now() - make_interval(days => ${plan.offer_after_days ?? 3})` : [];
-  for (const o of offers) await enqueue(sql, { type: 'subscription.offer', key: `sub-offer:${o.lead_id}`, role: 'sales_agent', entityType: 'lead', entityId: String(o.lead_id),
+  for (const o of offers) await safeEnqueue(sql, { type: 'subscription.offer', key: `sub-offer:${o.lead_id}`, role: 'sales_agent', entityType: 'lead', entityId: String(o.lead_id),
     input: { lead_id: o.lead_id }, priority: 57, title: `Monthly pack offer: ${String(o.title).slice(0, 70)}`, timeoutSeconds: 240 });
   // A subscription paused for an unpaid month resumes as soon as that month is paid.
   await sql`update public.subscriptions s set status = 'active', paused_reason = null where s.status = 'paused' and s.paused_reason = 'previous month not paid yet'
       and (select public.project_is_paid(p.id) from public.projects p where p.subscription_id = s.id order by p.cycle desc nulls last limit 1)`;
   const months = await sql`select id, cycles from public.subscriptions where status = 'active' and next_cycle_at <= now()`;
-  for (const d of months) await enqueue(sql, { type: 'subscription.cycle', key: `sub-cycle:${d.id}:${Number(d.cycles) + 1}`, role: 'project_manager', entityType: 'subscription', entityId: String(d.id),
+  for (const d of months) await safeEnqueue(sql, { type: 'subscription.cycle', key: `sub-cycle:${d.id}:${Number(d.cycles) + 1}`, role: 'project_manager', entityType: 'subscription', entityId: String(d.id),
     input: { subscription_id: d.id }, priority: 60, title: `Monthly subscription: month ${Number(d.cycles) + 1}`, timeoutSeconds: 120 });
   // Yearly renewal of the "website online" option: the owner is reminded a month before.
   await scheduleHostingRenewals(sql);
   // Proposals without a decision (no reply, or "maybe later"): the same offer again, with a "not interested" button.
   const proposals = await sql`select id, title, coalesce((quote->>'reminders')::int, 0) as n from public.leads where stage = 'proposal' and next_follow_up_at <= now() and quote ? 'mockup_sent_at'`;
-  for (const l of proposals) await enqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
+  for (const l of proposals) await safeEnqueue(sql, { type: 'lead.proposal_reminder', key: `proposal-reminder:${l.id}:${Number(l.n) + 1}`, role: 'sales_agent', entityType: 'lead',
     entityId: String(l.id), input: { lead_id: l.id }, priority: 56, title: `Proposal reminder: ${String(l.title).slice(0, 70)}`, timeoutSeconds: 240 });
-  await enqueue(sql, { type: 'comms.poll_inbox', key: `comms.poll:${runId}`, role: 'mail_clerk', priority: 95, title: 'Check company mailbox', timeoutSeconds: 120 });
-  await enqueue(sql, { type: 'comms.send', key: `comms.send:${runId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails', timeoutSeconds: 180 });
-  return { recovered, expired, executed, sources, reminders: reminders.length, follow_ups: followUps.length };
+  await safeEnqueue(sql, { type: 'comms.poll_inbox', key: `comms.poll:${runId}`, role: 'mail_clerk', priority: 95, title: 'Check company mailbox', timeoutSeconds: 120 });
+  await safeEnqueue(sql, { type: 'comms.send', key: `comms.send:${runId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails', timeoutSeconds: 180 });
+  return { recovered, expired, executed, sources, reminders: reminders.length, follow_ups: followUps.length, schedule_errors: scheduleErrors };
 }
 
 export async function executeTask(o: RuntimeOptions, ai: AiGateway, task: TaskRow): Promise<'succeeded' | string> {
@@ -173,7 +176,8 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
       ${o.sql.json({ public: isPublic, interval_minutes: isPublic ? 20 : 120, minute_offset: isPublic ? 0 : 23, last_started_at: new Date().toISOString() } as never)},
       'Cycle cadence of the agents (written by the worker).')
       on conflict (key) do update set value = excluded.value, updated_at = now()`;
-  const schedule = await scheduleDueWork(o.sql, new Date(), o.workerId);
+  // Even if planning fails, the cycle still processes the queue and sends what was approved.
+  const schedule = await scheduleDueWork(o.sql, new Date(), o.workerId).catch((e: Error) => { log(`schedule failed: ${e.message.slice(0, 200)}`); return { schedule_failed: 1 } as Record<string, number>; });
   log(`schedule: ${JSON.stringify(schedule)}`);
   const ai = new AiGateway(o.sql, o.env ?? process.env, o.fetchFn ?? fetch);
   let succeeded = 0, failed = 0, n = 0;

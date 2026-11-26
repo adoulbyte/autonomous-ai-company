@@ -277,6 +277,17 @@ describe('monthly subscription after the delivery', () => {
 });
 
 describe('safety nets', () => {
+  it('a source that ran normally for weeks is not blocked by the fan-out guard; a runaway loop still is', async () => {
+    const { enqueue } = await import('../src/queue.js');
+    await sql`insert into public.tasks(type, status, entity_type, entity_id, idempotency_key, created_at, finished_at)
+        select 'discovery.run_source', 'succeeded', 'source', 'long_lived', 'old-' || g, now() - interval '3 days', now() - interval '3 days' from generate_series(1, 80) g`;
+    await expect(enqueue(sql, { type: 'discovery.run_source', key: 'new-run', entityType: 'source', entityId: 'long_lived' })).resolves.toBeTruthy();
+    await sql`insert into public.tasks(type, status, entity_type, entity_id, idempotency_key) select 'x', 'pending', 'source', 'runaway', 'rw-' || g from generate_series(1, 60) g`;
+    await expect(enqueue(sql, { type: 'x', key: 'rw-61', entityType: 'source', entityId: 'runaway' })).rejects.toThrow(/fan-out/);
+    // and the cycle itself never crashes because of it
+    await expect(runWorker({ sql, workerId: 'fan', env, fetchFn: net.fn, mail, timeBudgetMs: 60_000, maxTasks: 0 })).resolves.toBeTruthy();
+  });
+
   it('a long task that cannot finish before the machine is stopped is handed back without losing an attempt', async () => {
     const { enqueue } = await import('../src/queue.js');
     const id = await enqueue(sql, { type: 'system.health_check', key: 'long-task-test', role: 'orchestrator', priority: 99, timeoutSeconds: 400 });
