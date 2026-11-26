@@ -48,6 +48,8 @@ export const sendOutbox: Handler = async (ctx) => {
   const id = await identity(ctx.sql);
   let sent = 0, failed = 0, sentOutreach = 0;
   const pacing = ctx.env.GITHUB_ACTIONS === 'true';
+  // Stop well before the task's own time limit: what is not sent now is sent at the next cycle (nothing is lost).
+  const deadline = Date.now() + Math.max(30, Number(ctx.task.timeout_seconds ?? 180) - 30) * 1000;
   for (const m of queue) {
     if (/(mailer-daemon|postmaster|no-?reply)@/i.test(String(m.to_addr))) { await ctx.sql`update public.messages set status = 'rejected', last_error = 'automated address: never answered' where id = ${m.id}`; continue; }
     const dnc = await ctx.sql`select 1 from public.contacts where lower(email) = lower(${m.to_addr}) and do_not_contact`;
@@ -58,8 +60,12 @@ export const sendOutbox: Handler = async (ctx) => {
       const attachments = ((m.attachments as { filename: string; content_b64: string; contentType?: string; cid?: string }[]) ?? [])
         .map((a) => ({ filename: a.filename, content: Buffer.from(a.content_b64, 'base64'), contentType: a.contentType, ...(a.cid ? { cid: a.cid } : {}) }));
       const prospecting = /^(outreach|followup):/.test(String(m.idempotency_key ?? ''));
-      if (prospecting && sentOutreach > 0 && pacing) await new Promise((r) => setTimeout(r, 25000 + Math.random() * 35000));   // human-like pace
-      if (prospecting && sentOutreach >= 5) continue;   // at most 5 prospecting emails per run; the rest go next cycle
+      if (prospecting && sentOutreach >= 5) continue;   // at most 5 prospecting emails per run; the rest go next cycle (checked BEFORE waiting)
+      if (prospecting && sentOutreach > 0 && pacing) {
+        const wait = 25000 + Math.random() * 35000;   // human-like pace
+        if (Date.now() + wait > deadline) continue;   // no time left in this task: the next cycle sends it
+        await new Promise((r) => setTimeout(r, wait));
+      }
       const cls = (m.classification ?? {}) as { cta?: { lang: string; need?: string } };
       const cta = cls.cta && ctx.mail ? prospectCta(ctx.mail.address, cls.cta.lang, await getCatalog(ctx.sql), cls.cta.need ?? 'website') : undefined;
       const html = (m.html as string | null) ?? renderHtml(m.body, id, { preheader: String(m.subject ?? ''), cta, noImages: prospecting, personal: prospecting });

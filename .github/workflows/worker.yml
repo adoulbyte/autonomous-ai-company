@@ -16,7 +16,7 @@ jobs:
     # The 20-minute schedule is skipped (no minutes used) while the repository is private.
     if: github.event.schedule != '*/20 * * * *' || github.event.repository.private == false
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Check configuration
         id: cfg
@@ -49,7 +49,7 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           WORKER_TIME_BUDGET: '480'
-          WORKER_HARD_LIMIT_SECONDS: '600'   # the job is stopped at 12 min (setup included)
+          WORKER_HARD_LIMIT_SECONDS: '780'   # the job is stopped at 15 min (setup included)
           REPO_PRIVATE: ${{ github.event.repository.private }}
       - name: Chain next run (work waiting)
         if: steps.work.outputs.chain == 'true'

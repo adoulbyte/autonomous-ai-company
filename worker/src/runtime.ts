@@ -200,7 +200,9 @@ export async function runWorker(o: RuntimeOptions): Promise<{ succeeded: number;
       await o.sql`update public.worker_heartbeats set last_seen_at = now(), tasks_succeeded = ${succeeded}, tasks_failed = ${failed} where worker_id = ${o.workerId}`;
     }
     // Final pass: send any email approved during this run (outreach, replies, invoices, deliveries) without waiting 2 hours.
-    if (o.maxTasks == null || n < o.maxTasks) {   // always: the job timeout leaves several minutes of margin
+    const hard = Number((o.env ?? process.env).WORKER_HARD_LIMIT_SECONDS ?? 0);
+    const sendFits = !hard || Date.now() + 200_000 < started + hard * 1000;   // the final send pass must finish before the machine is stopped
+    if ((o.maxTasks == null || n < o.maxTasks) && sendFits) {
       await enqueue(o.sql, { type: 'comms.send', key: `comms.send:end:${o.workerId}`, role: 'mail_clerk', priority: 4, title: 'Send approved emails (end of run)', timeoutSeconds: 180 });
       const [t] = await claim(o.sql, o.workerId, 1, ['comms.send']);
       if (t) { const r = await executeTask(o, ai, t); if (r === 'succeeded') succeeded++; else failed++; }
